@@ -56,10 +56,6 @@ EOF
 done
 ```
 
-**Benefits**: Persistent across sessions, works in all shells, available to all processes.
-
-**Drawbacks**: Requires PATH directory access, needs sudo for system install.
-
 #### Verify Installation
 
 ```bash
