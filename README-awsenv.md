@@ -6,6 +6,7 @@ Run commands and scripts in Docker with AWS CLI and session-manager-plugin pre-i
 
 - No local AWS CLI installation required
 - Automatic AWS credentials handling (files and environment variables)
+- Full terminal support (paging, colors, interactive sessions)
 - Package caching via Docker image layers
 - Custom package installation
 - Directory mounting with read-only/read-write control
@@ -22,10 +23,14 @@ Options:
   -m MOUNT          Mount as <local>:<docker>[:(ro|rw)] (repeatable)
   -h                Help
 
+Environment Variables:
+  AWSENV_TTY        Control TTY allocation (always|never|auto, default: auto)
+
 Examples:
   awsenv.sh aws s3 ls
   awsenv.sh -p vim ./my-script.sh
   awsenv.sh -m $(pwd)/logs:/logs:ro -m /data:/data:rw ./process.sh
+  AWSENV_TTY=never awsenv.sh aws ec2 describe-instances
 ```
 
 ## Installation
@@ -43,6 +48,28 @@ complete -C aws_completer aws
 ```zsh
 autoload -Uz compinit && compinit
 complete -C aws_completer aws
+```
+
+## Terminal Support
+
+awsenv automatically detects interactive terminals and enables full TTY support including paging, colors, and interactive sessions.
+
+**Interactive commands work as expected:**
+```bash
+./awsenv.sh aws help                    # Pages through less/more
+./awsenv.sh aws ssm start-session ...   # Full terminal (vim, arrows)
+```
+
+**Scripting and automation work cleanly:**
+```bash
+./awsenv.sh aws ec2 describe-instances | jq .   # No TTY, clean output
+output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
+```
+
+**Override when needed:**
+```bash
+AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
+AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
 ```
 
 ## Examples
@@ -140,6 +167,8 @@ When ec2client and rdsclient have AWS CLI available (via wrapper scripts or loca
 
 **AWS Credentials**: Mounts `$HOME/.aws` read-only to `/root/.aws` and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.).
 
+**Terminal Handling**: Automatically detects interactive terminals and allocates pseudo-TTY when stdin is a TTY. Passes terminal environment variables (TERM, COLUMNS, LINES, PAGER, LANG, LC_*) for proper display and interaction. Can be overridden with AWSENV_TTY environment variable.
+
 **Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
 
 **Package Files**: One package per line. Lines starting with `#` and empty lines ignored.
@@ -151,3 +180,4 @@ When ec2client and rdsclient have AWS CLI available (via wrapper scripts or loca
 - Supports yum/dnf packages (Amazon Linux base)
 - Working directory automatically preserved
 - Arguments with spaces, quotes, and metacharacters preserved correctly
+- Terminal features (paging, colors, interactive tools) work automatically
