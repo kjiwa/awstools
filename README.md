@@ -14,10 +14,16 @@ POSIX-compliant shell scripts for AWS resource management. Connect to EC2 instan
 
 ```bash
 # Connect to EC2 via SSM
-./ec2client.sh -t Environment -v production
+./ec2client.sh -t Environment=production
+
+# Multiple tag filters (AND logic)
+./ec2client.sh -t Environment=prod -t Team=backend
 
 # Connect to RDS with IAM
-./rdsclient.sh -t Application -v api -a iam
+./rdsclient.sh -t Application=api -a iam
+
+# Multiple database filters
+./rdsclient.sh -t Environment=prod -t Application=analytics
 
 # Run AWS commands in container
 ./awsenv.sh aws s3 ls
@@ -71,7 +77,7 @@ aws s3 ls
 
 ## Common Features
 
-- Tag-based resource filtering
+- Multiple tag-based filtering (AND logic)
 - Interactive selection when multiple matches
 - Auto-connect with single match
 - POSIX-compliant (sh, dash, bash, zsh)

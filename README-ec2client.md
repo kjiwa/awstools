@@ -4,7 +4,7 @@ Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, a
 
 ## Features
 
-- Tag-based filtering
+- Multiple tag-based filtering with AND logic
 - SSH and SSM connection methods
 - Works with private instances (SSM)
 - Auto-connects with single match
@@ -16,8 +16,7 @@ Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, a
 ec2client.sh [OPTIONS]
 
 Options:
-  -t TAG_KEY        Tag key to filter
-  -v TAG_VALUE      Tag value to filter
+  -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
   -p PROFILE        AWS profile
   -r REGION         AWS region (default: us-east-2)
   -c METHOD         Connection method: ssh or ssm (default: ssm)
@@ -29,13 +28,12 @@ Environment Variables:
   AWS_PROFILE, AWS_REGION, AWS_DEFAULT_REGION
   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
 
-Note: Tag key and value must be specified together
-
 Examples:
   ec2client.sh
-  ec2client.sh -t Environment -v prod
-  ec2client.sh -t Name -v bastion -c ssh -k ~/.ssh/key.pem
-  ec2client.sh -t Name -v web -s "cd /var/log; bash -l"
+  ec2client.sh -t Environment=prod
+  ec2client.sh -t Environment=prod -t Team=backend
+  ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
+  ec2client.sh -t Environment=staging -s "cd; bash -l"
 ```
 
 ## Examples
@@ -46,14 +44,17 @@ Examples:
 # All running instances
 ./ec2client.sh
 
-# Filter by tag
-./ec2client.sh -t Environment -v production
-./ec2client.sh -t Name -v web-server
+# Single tag filter
+./ec2client.sh -t Environment=production
+
+# Multiple tag filters (AND logic)
+./ec2client.sh -t Environment=production -t Team=backend
+./ec2client.sh -t Name=web -t Role=api -t Region=us-east-1
 ```
 
 Output:
 ```
-Searching for EC2 instances with Environment=production...
+Searching for EC2 instances with 2 tag filters...
 
 1. api-server-01 (i-0123456789abcdef0): 54.123.45.67
 2. api-server-02 (i-0fedcba987654321): 54.123.45.68
@@ -67,23 +68,26 @@ Connecting to i-0a1b2c3d4e5f6g7h8 via SSM...
 
 ```bash
 # With key file
-./ec2client.sh -t Name -v bastion -c ssh -k ~/.ssh/prod.pem
+./ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/prod.pem
 
-# Different user
-./ec2client.sh -t Name -v ubuntu-server -c ssh -u ubuntu
+# Different user with multiple tags
+./ec2client.sh -t Environment=prod -t Name=ubuntu-server -c ssh -u ubuntu
+
+# Multiple tags for precise selection
+./ec2client.sh -t Team=platform -t Role=bastion -t Environment=prod -c ssh
 ```
 
 ### Custom SSM Commands
 
 ```bash
 # Start bash login shell
-./ec2client.sh -t Name -v web -s "bash -l"
+./ec2client.sh -t Name=web -s "bash -l"
 
-# Change directory and start shell
-./ec2client.sh -t Name -v app -s "cd /var/log; bash -l"
+# Multiple tags with custom command
+./ec2client.sh -t Environment=prod -t Role=worker -s "cd /var/log; bash -l"
 
 # Custom profile
-./ec2client.sh -t Name -v dev -s "cd; bash --rcfile ~/.custom_profile"
+./ec2client.sh -t Name=dev -s "cd; bash --rcfile ~/.custom_profile"
 ```
 
 ### With awsenv
@@ -91,13 +95,46 @@ Connecting to i-0a1b2c3d4e5f6g7h8 via SSM...
 If wrapper scripts are installed, ec2client works directly:
 
 ```bash
-./ec2client.sh -t Environment -v prod
+./ec2client.sh -t Environment=prod
 ```
 
 Install openssh-clients when executing inside an awsenv container:
 
 ```bash
-./awsenv.sh -p openssh-clients ./ec2client.sh -t Name -v bastion -c ssh -k ~/.ssh/key.pem
+./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
+```
+
+## Tag Filtering
+
+### Syntax
+- Format: `-t key=value`
+- Multiple filters: `-t key1=value1 -t key2=value2`
+- Logic: All tags must match (AND operation)
+
+### Character Handling
+- First `=` separates key from value
+- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
+- Keys with `=` not supported (extremely rare in practice)
+- Use quotes for spaces: `-t Name='Web Server'`
+- Tag matching is case-sensitive
+
+### Examples
+
+```bash
+# Single tag
+./ec2client.sh -t Environment=prod
+
+# Two tags (both must match)
+./ec2client.sh -t Environment=prod -t Team=backend
+
+# Three tags for precise filtering
+./ec2client.sh -t Environment=prod -t Application=api -t Region=us-east-1
+
+# Tag value with equals sign
+./ec2client.sh -t Config=setting=value
+
+# Tag value with spaces
+./ec2client.sh -t Name='My Server' -t Owner='John Doe'
 ```
 
 ## Connection Methods

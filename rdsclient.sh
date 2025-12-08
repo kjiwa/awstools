@@ -28,8 +28,9 @@ AWS_PROFILE="${AWS_PROFILE:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-2}}"
 ENDPOINT_TYPE=""
 AUTH_TYPE=""
-TAG_KEY=""
-TAG_VALUE=""
+TAG_KEYS=""
+TAG_VALUES=""
+TAG_COUNT=0
 DB_USER=""
 DB_PASSWORD=""
 CONTAINER_NAME=""
@@ -40,8 +41,7 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Optional:
-  -t TAG_KEY        Tag key to filter databases
-  -v TAG_VALUE      Tag value to filter databases
+  -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
   -p PROFILE        AWS profile
   -r REGION         AWS region (default: us-east-2)
   -e ENDPOINT_TYPE  Aurora endpoint type (reader or writer)
@@ -57,20 +57,19 @@ Environment Variables:
   AWS_SECRET_ACCESS_KEY    AWS secret access key
   AWS_SESSION_TOKEN        AWS session token for temporary credentials
 
-Note: If -t is specified, -v must also be specified (and vice versa)
-
 Examples:
   $0
-  $0 -t Environment -v prod -a iam
-  $0 -t Environment -v staging -e writer
+  $0 -t Environment=prod
+  $0 -t Environment=prod -t Application=api -a iam
+  $0 -t Environment=staging -e writer
   $0 -u myuser -a manual
-  $0 -t Environment -v dev -s false
+  $0 -t Environment=dev -s false
 EOF
   exit 1
 }
 
 error_exit() {
-  echo "ERROR: $1" >&2
+  printf "ERROR: %s\n" "$1" >&2
   exit 1
 }
 
@@ -85,36 +84,96 @@ read_password() {
   stty -echo 2>/dev/null || true
   read -r password_input </dev/tty
   stty echo 2>/dev/null || true
-  echo "" >&2
+  printf "\n" >&2
 
   [ -z "$password_input" ] && error_exit "Password cannot be empty"
 
   DB_PASSWORD="$password_input"
 }
 
+trim_whitespace() {
+  printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+parse_tag_argument() {
+  arg="$1"
+
+  case "$arg" in
+  *=*)
+    PARSED_KEY="${arg%%=*}"
+    PARSED_VALUE="${arg#*=}"
+    ;;
+  *)
+    PARSED_KEY=""
+    PARSED_VALUE=""
+    ;;
+  esac
+}
+
+validate_tag_format() {
+  original="$1"
+  key="$2"
+  value="$3"
+
+  if [ -z "$key" ]; then
+    error_exit "Invalid tag format '$original': must contain '=' character"
+  fi
+
+  trimmed_key=$(trim_whitespace "$key")
+  if [ -z "$trimmed_key" ]; then
+    error_exit "Invalid tag format '$original': key cannot be empty"
+  fi
+
+  trimmed_value=$(trim_whitespace "$value")
+  if [ -z "$trimmed_value" ]; then
+    error_exit "Invalid tag format '$original': value cannot be empty"
+  fi
+
+  PARSED_KEY="$trimmed_key"
+  PARSED_VALUE="$trimmed_value"
+}
+
+accumulate_tags() {
+  key="$1"
+  value="$2"
+
+  if [ -z "$TAG_KEYS" ]; then
+    TAG_KEYS="$key"
+    TAG_VALUES="$value"
+  else
+    TAG_KEYS="$TAG_KEYS
+$key"
+    TAG_VALUES="$TAG_VALUES
+$value"
+  fi
+
+  TAG_COUNT=$((TAG_COUNT + 1))
+}
+
+get_tag_at_index() {
+  idx="$1"
+  TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${idx}p")
+  TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
+}
+
 parse_options() {
-  while getopts "p:r:e:a:t:v:u:s:wh" opt; do
+  while getopts "p:r:e:a:t:u:s:h" opt; do
     case $opt in
     p) AWS_PROFILE="$OPTARG" ;;
     r) AWS_REGION="$OPTARG" ;;
     e) ENDPOINT_TYPE="$OPTARG" ;;
     a) AUTH_TYPE="$OPTARG" ;;
-    t) TAG_KEY="$OPTARG" ;;
-    v) TAG_VALUE="$OPTARG" ;;
+    t)
+      parse_tag_argument "$OPTARG"
+      validate_tag_format "$OPTARG" "$PARSED_KEY" "$PARSED_VALUE"
+      accumulate_tags "$PARSED_KEY" "$PARSED_VALUE"
+      ;;
     u) DB_USER="$OPTARG" ;;
     s) SSL_MODE="$OPTARG" ;;
     h) usage ;;
     *) usage ;;
     esac
   done
-}
-
-validate_tag() {
-  if [ -n "$TAG_KEY" ] || [ -n "$TAG_VALUE" ]; then
-    if [ -z "$TAG_KEY" ] || [ -z "$TAG_VALUE" ]; then
-      error_exit "Both tag key (-t) and tag value (-v) must be provided together"
-    fi
-  fi
 }
 
 validate_endpoint_type() {
@@ -143,7 +202,6 @@ validate_ssl_mode() {
 }
 
 validate_parameters() {
-  validate_tag
   validate_endpoint_type
   validate_auth_type
   validate_ssl_mode
@@ -163,20 +221,48 @@ build_aws_command() {
   fi
 }
 
-filter_by_tag() {
+build_jq_tag_selector() {
+  key="$1"
+  value="$2"
+  printf 'select(.TagList[]? | select(.Key == "%s" and .Value == "%s"))' "$key" "$value"
+}
+
+build_rds_tag_filter() {
+  if [ "$TAG_COUNT" -eq 0 ]; then
+    printf "."
+    return
+  fi
+
+  filter=""
+  i=1
+  while [ "$i" -le "$TAG_COUNT" ]; do
+    get_tag_at_index "$i"
+    selector=$(build_jq_tag_selector "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX")
+
+    if [ -n "$filter" ]; then
+      filter="$filter | "
+    fi
+    filter="$filter$selector"
+
+    i=$((i + 1))
+  done
+
+  printf "[.[] | %s]" "$filter"
+}
+
+filter_by_tags() {
   json_data="$1"
   resource_type="$2"
 
-  if [ -n "$TAG_KEY" ]; then
-    echo "$json_data" | jq "[.$resource_type[] | select(.TagList[]? | select(.Key == \"$TAG_KEY\" and .Value == \"$TAG_VALUE\"))]"
-  else
-    echo "$json_data" | jq ".$resource_type"
-  fi
+  tag_filter=$(build_rds_tag_filter)
+  resource_data=$(printf "%s" "$json_data" | jq ".$resource_type")
+
+  printf "%s" "$resource_data" | jq "$tag_filter"
 }
 
 get_standalone_instances() {
   instances_json="$1"
-  echo "$instances_json" | jq '[.[] | select(.DBClusterIdentifier == null or .DBClusterIdentifier == "")] | sort_by(.DBInstanceIdentifier)' |
+  printf "%s" "$instances_json" | jq '[.[] | select(.DBClusterIdentifier == null or .DBClusterIdentifier == "")] | sort_by(.DBInstanceIdentifier)' |
     jq -r '.[] | [.DBInstanceIdentifier, .Engine, .Endpoint.Address, "rds"] | @tsv'
 }
 
@@ -184,21 +270,21 @@ get_cluster_endpoints() {
   clusters_json="$1"
   endpoint_type="$2"
 
-  echo "$clusters_json" | jq -c 'sort_by(.DBClusterIdentifier) | .[]' | while read -r cluster; do
-    cluster_id=$(echo "$cluster" | jq -r '.DBClusterIdentifier')
-    engine=$(echo "$cluster" | jq -r '.Engine')
-    writer_endpoint=$(echo "$cluster" | jq -r '.Endpoint')
-    reader_endpoint=$(echo "$cluster" | jq -r '.ReaderEndpoint // empty')
+  printf "%s" "$clusters_json" | jq -c 'sort_by(.DBClusterIdentifier) | .[]' | while read -r cluster; do
+    cluster_id=$(printf "%s" "$cluster" | jq -r '.DBClusterIdentifier')
+    engine=$(printf "%s" "$cluster" | jq -r '.Engine')
+    writer_endpoint=$(printf "%s" "$cluster" | jq -r '.Endpoint')
+    reader_endpoint=$(printf "%s" "$cluster" | jq -r '.ReaderEndpoint // empty')
 
     if [ -z "$endpoint_type" ]; then
-      echo "$cluster_id$(printf '\t')$engine$(printf '\t')$writer_endpoint$(printf '\t')aurora"
+      printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$writer_endpoint" "aurora"
       if [ -n "$reader_endpoint" ]; then
-        echo "$cluster_id$(printf '\t')$engine$(printf '\t')$reader_endpoint$(printf '\t')aurora"
+        printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$reader_endpoint" "aurora"
       fi
     elif [ "$endpoint_type" = "writer" ]; then
-      echo "$cluster_id$(printf '\t')$engine$(printf '\t')$writer_endpoint$(printf '\t')aurora"
+      printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$writer_endpoint" "aurora"
     elif [ "$endpoint_type" = "reader" ] && [ -n "$reader_endpoint" ]; then
-      echo "$cluster_id$(printf '\t')$engine$(printf '\t')$reader_endpoint$(printf '\t')aurora"
+      printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$reader_endpoint" "aurora"
     fi
   done
 }
@@ -214,18 +300,30 @@ assemble_database_list() {
   cat "$temp_file"
 }
 
-query_databases() {
-  if [ -n "$TAG_KEY" ]; then
-    echo "Searching for databases with $TAG_KEY=$TAG_VALUE..." >&2
-  else
-    echo "Searching for all databases..." >&2
+build_tag_display_message() {
+  if [ "$TAG_COUNT" -eq 0 ]; then
+    printf "all databases"
+    return
   fi
 
-  instances_json=$($AWS_CMD rds describe-db-instances 2>/dev/null || echo '{"DBInstances":[]}')
-  clusters_json=$($AWS_CMD rds describe-db-clusters 2>/dev/null || echo '{"DBClusters":[]}')
+  if [ "$TAG_COUNT" -eq 1 ]; then
+    get_tag_at_index 1
+    printf "databases with %s=%s" "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX"
+    return
+  fi
 
-  filtered_instances=$(filter_by_tag "$instances_json" "DBInstances")
-  filtered_clusters=$(filter_by_tag "$clusters_json" "DBClusters")
+  printf "databases with %d tag filters" "$TAG_COUNT"
+}
+
+query_databases() {
+  message=$(build_tag_display_message)
+  printf "Searching for %s...\n" "$message" >&2
+
+  instances_json=$($AWS_CMD rds describe-db-instances 2>/dev/null || printf '{"DBInstances":[]}')
+  clusters_json=$($AWS_CMD rds describe-db-clusters 2>/dev/null || printf '{"DBClusters":[]}')
+
+  filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
+  filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
 
   temp_file=$(mktemp)
   trap "rm -f $temp_file" EXIT
@@ -233,66 +331,79 @@ query_databases() {
   DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")
   rm -f "$temp_file"
 
-  if [ -z "$DATABASE_LIST" ]; then
-    if [ -n "$TAG_KEY" ]; then
-      error_exit "No databases found with $TAG_KEY=$TAG_VALUE"
-    else
-      error_exit "No databases found"
-    fi
+  [ -z "$DATABASE_LIST" ] && error_exit "No databases found matching filters"
+
+  return 0
+}
+
+count_lines() {
+  text="$1"
+  if [ -z "$text" ]; then
+    printf "0"
+    return
   fi
+  printf "%s\n" "$text" | grep -c .
 }
 
 display_databases() {
-  echo "" >&2
+  printf "\n" >&2
   i=1
-  echo "$DATABASE_LIST" | while IFS="$(printf '\t')" read -r id engine endpoint type; do
+  printf "%s\n" "$DATABASE_LIST" | while IFS="$(printf '\t')" read -r id engine endpoint type; do
     if [ -n "$id" ]; then
       if [ "$type" = "aurora" ]; then
-        echo "$i. [Aurora] $id ($engine): $endpoint" >&2
+        printf "%d. [Aurora] %s (%s): %s\n" "$i" "$id" "$engine" "$endpoint" >&2
       else
-        echo "$i. [RDS] $id ($engine): $endpoint" >&2
+        printf "%d. [RDS] %s (%s): %s\n" "$i" "$id" "$engine" "$endpoint" >&2
       fi
       i=$((i + 1))
     fi
   done
-  echo "" >&2
+  printf "\n" >&2
+}
+
+read_user_selection() {
+  max="$1"
+
+  while true; do
+    printf "Select database (1-%d): " "$max" >&2
+    read -r selection </dev/tty || exit 1
+
+    case "$selection" in
+    '' | *[!0-9]*)
+      printf "ERROR: Invalid selection\n" >&2
+      continue
+      ;;
+    esac
+
+    if [ "$selection" -ge 1 ] && [ "$selection" -le "$max" ]; then
+      printf "%s" "$selection"
+      return 0
+    fi
+
+    printf "ERROR: Selection must be between 1 and %d\n" "$max" >&2
+  done
 }
 
 select_database() {
-  count=$(echo "$DATABASE_LIST" | grep -c . || echo "0")
+  count=$(count_lines "$DATABASE_LIST")
 
   if [ "$count" -eq 0 ]; then
     error_exit "No databases found"
-  elif [ "$count" -eq 1 ]; then
-    echo "Connecting to database..." >&2
+  fi
+
+  if [ "$count" -eq 1 ]; then
+    printf "Connecting to database...\n" >&2
     selection=1
   else
     display_databases
-
-    while :; do
-      printf "Select database (1-$count): " >&2
-      read -r selection </dev/tty || exit 1
-
-      case "$selection" in
-      '' | *[!0-9]*)
-        echo "ERROR: Invalid selection" >&2
-        continue
-        ;;
-      esac
-
-      if [ "$selection" -ge 1 ] 2>/dev/null && [ "$selection" -le "$count" ] 2>/dev/null; then
-        break
-      fi
-
-      echo "ERROR: Invalid selection" >&2
-    done
+    selection=$(read_user_selection "$count")
   fi
 
-  SELECTED_LINE=$(echo "$DATABASE_LIST" | sed -n "${selection}p")
-  DB_IDENTIFIER=$(echo "$SELECTED_LINE" | cut -f1)
-  ENGINE=$(echo "$SELECTED_LINE" | cut -f2)
-  ENDPOINT=$(echo "$SELECTED_LINE" | cut -f3)
-  DB_TYPE=$(echo "$SELECTED_LINE" | cut -f4)
+  SELECTED_LINE=$(printf "%s" "$DATABASE_LIST" | sed -n "${selection}p")
+  DB_IDENTIFIER=$(printf "%s" "$SELECTED_LINE" | cut -f1)
+  ENGINE=$(printf "%s" "$SELECTED_LINE" | cut -f2)
+  ENDPOINT=$(printf "%s" "$SELECTED_LINE" | cut -f3)
+  DB_TYPE=$(printf "%s" "$SELECTED_LINE" | cut -f4)
 }
 
 extract_db_field() {
@@ -300,20 +411,21 @@ extract_db_field() {
   resource_type="$2"
   field_path="$3"
 
-  echo "$details" | jq -r ".${resource_type}[0].${field_path}"
+  printf "%s" "$details" | jq -r ".${resource_type}[0].${field_path}"
 }
 
 get_database_details() {
   if [ "$DB_TYPE" = "aurora" ]; then
     details=$($AWS_CMD rds describe-db-clusters --db-cluster-identifier "$DB_IDENTIFIER" 2>/dev/null)
     resource_type="DBClusters"
+    field_prefix=""
   else
     details=$($AWS_CMD rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" 2>/dev/null)
     resource_type="DBInstances"
     field_prefix="Endpoint."
   fi
 
-  PORT=$(extract_db_field "$details" "$resource_type" "${field_prefix:-}Port")
+  PORT=$(extract_db_field "$details" "$resource_type" "${field_prefix}Port")
   DB_NAME=$(extract_db_field "$details" "$resource_type" "DatabaseName")
   MASTER_USER=$(extract_db_field "$details" "$resource_type" "MasterUsername")
   IAM_ENABLED=$(extract_db_field "$details" "$resource_type" "IAMDatabaseAuthenticationEnabled")
@@ -326,7 +438,7 @@ get_database_details() {
     [ -z "$DB_USER" ] && error_exit "Failed to retrieve master username. Specify username with -u"
   fi
 
-  echo "Found database: $DB_IDENTIFIER ($ENDPOINT:$PORT/$DB_NAME)" >&2
+  printf "Found database: %s (%s:%s/%s)\n" "$DB_IDENTIFIER" "$ENDPOINT" "$PORT" "$DB_NAME" >&2
 }
 
 determine_client() {
@@ -364,7 +476,7 @@ authenticate_manual() {
 }
 
 authenticate_iam() {
-  echo "Generating IAM authentication token..." >&2
+  printf "Generating IAM authentication token...\n" >&2
 
   FINAL_USER="$MASTER_USER"
   FINAL_PASSWORD=$($AWS_CMD rds generate-db-auth-token \
@@ -377,21 +489,21 @@ authenticate_iam() {
 authenticate_secret() {
   [ -z "$SECRET_ARN" ] && error_exit "No AWS Secrets Manager secret found for this database"
 
-  echo "Retrieving credentials from AWS Secrets Manager..." >&2
+  printf "Retrieving credentials from AWS Secrets Manager...\n" >&2
   secret_value=$($AWS_CMD secretsmanager get-secret-value \
     --secret-id "$SECRET_ARN" \
     --query SecretString \
     --output text 2>/dev/null)
 
-  FINAL_USER=$(echo "$secret_value" | jq -r '.username // empty')
-  FINAL_PASSWORD=$(echo "$secret_value" | jq -r '.password // empty')
+  FINAL_USER=$(printf "%s" "$secret_value" | jq -r '.username // empty')
+  FINAL_PASSWORD=$(printf "%s" "$secret_value" | jq -r '.password // empty')
   [ -z "$FINAL_USER" ] || [ -z "$FINAL_PASSWORD" ] && error_exit "Failed to parse credentials from Secrets Manager"
 
   return 0
 }
 
 authenticate_auto() {
-  echo "Auto-detecting authentication method..." >&2
+  printf "Auto-detecting authentication method...\n" >&2
   if [ "$IAM_ENABLED" = "true" ]; then
     AUTH_TYPE="iam"
   elif [ -n "$SECRET_ARN" ]; then
@@ -435,7 +547,7 @@ connect_to_sqlserver() {
 }
 
 connect_database() {
-  echo "Connecting to $DB_IDENTIFIER as $FINAL_USER..." >&2
+  printf "Connecting to %s as %s...\n" "$DB_IDENTIFIER" "$FINAL_USER" >&2
 
   CONTAINER_NAME="dbclient-$(date +%s)-$$"
   trap cleanup EXIT INT TERM

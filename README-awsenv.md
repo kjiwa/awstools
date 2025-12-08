@@ -25,7 +25,6 @@ Options:
 Examples:
   awsenv.sh aws s3 ls
   awsenv.sh -p vim ./my-script.sh
-  awsenv.sh -f packages.txt ./rdsclient.sh -t Environment -v prod
   awsenv.sh -m $(pwd)/logs:/logs:ro -m /data:/data:rw ./process.sh
 ```
 
@@ -122,14 +121,14 @@ aws ec2 describe-instances \
 When ec2client and rdsclient have AWS CLI available (via wrapper scripts or local installation), they work seamlessly:
 
 ```bash
-./ec2client.sh -t Environment -v prod
-./rdsclient.sh -t Application -v api
+./ec2client.sh -t Environment=prod -t Team=backend
+./rdsclient.sh -t Application=api -t Environment=staging
 ```
 
 **Note**: rdsclient cannot be run inside awsenv (creates Docker-in-Docker issues). For ec2client with SSH, openssh-clients package is required:
 
 ```bash
-./awsenv.sh -p openssh-clients ./ec2client.sh -t Name -v bastion -c ssh
+./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh
 ```
 
 ## How It Works

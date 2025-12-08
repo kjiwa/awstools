@@ -4,7 +4,7 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 
 ## Features
 
-- Tag-based filtering
+- Multiple tag-based filtering with AND logic
 - Auto-detection of authentication methods
 - RDS and Aurora (reader/writer endpoints)
 - Multiple authentication types
@@ -18,8 +18,7 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 rdsclient.sh [OPTIONS]
 
 Options:
-  -t TAG_KEY        Tag key to filter
-  -v TAG_VALUE      Tag value to filter
+  -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
   -p PROFILE        AWS profile
   -r REGION         AWS region (default: us-east-2)
   -e ENDPOINT_TYPE  Aurora endpoint: reader or writer
@@ -31,14 +30,13 @@ Environment Variables:
   AWS_PROFILE, AWS_REGION, AWS_DEFAULT_REGION
   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
 
-Note: Tag key and value must be specified together
-
 Examples:
   rdsclient.sh
-  rdsclient.sh -t Environment -v prod -a iam
-  rdsclient.sh -t Environment -v staging -e writer
+  rdsclient.sh -t Environment=prod
+  rdsclient.sh -t Environment=prod -t Application=api -a iam
+  rdsclient.sh -t Environment=staging -e writer
   rdsclient.sh -u myuser -a manual
-  rdsclient.sh -t Environment -v dev -s false
+  rdsclient.sh -t Environment=dev -s false
 ```
 
 ## Examples
@@ -46,16 +44,22 @@ Examples:
 ### Auto-Authentication
 
 ```bash
-# Auto-detect method
-./rdsclient.sh -t Environment -v production
+# All databases
+./rdsclient.sh
 
-# Writer endpoint only
-./rdsclient.sh -t Application -v api -e writer
+# Single tag filter
+./rdsclient.sh -t Environment=production
+
+# Multiple tag filters (AND logic)
+./rdsclient.sh -t Environment=production -t Application=api
+
+# Writer endpoint only with multiple tags
+./rdsclient.sh -t Application=analytics -t Team=data -e writer
 ```
 
 Output:
 ```
-Searching for databases with Environment=production...
+Searching for databases with 2 tag filters...
 
 1. [Aurora] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-abc.us-east-2.rds.amazonaws.com
 2. [Aurora] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-ro-abc.us-east-2.rds.amazonaws.com
@@ -69,33 +73,46 @@ Connecting to analytics-cluster as admin...
 ### Specify Authentication
 
 ```bash
-# IAM authentication
-./rdsclient.sh -t Name -v prod-db -a iam
+# IAM authentication with multiple tags
+./rdsclient.sh -t Environment=prod -t Name=main-db -a iam
 
 # Manual authentication
 ./rdsclient.sh -u appuser -a manual
 
-# Secrets Manager
-./rdsclient.sh -t Application -v api -a secret
+# Secrets Manager with tag filter
+./rdsclient.sh -t Application=api -a secret
 ```
 
 ### Aurora Endpoints
 
 ```bash
-# Writer only
-./rdsclient.sh -t Environment -v prod -e writer
+# Writer only with multiple tags
+./rdsclient.sh -t Environment=prod -t Application=web -e writer
 
-# Reader only
-./rdsclient.sh -t Environment -v prod -e reader
+# Reader only with multiple tags
+./rdsclient.sh -t Environment=prod -t Team=analytics -e reader
 
-# Both (default)
-./rdsclient.sh -t Environment -v prod
+# Both endpoints (default)
+./rdsclient.sh -t Environment=prod
+```
+
+### Multiple Tag Combinations
+
+```bash
+# Two tags
+./rdsclient.sh -t Environment=prod -t Application=api
+
+# Three tags for precise filtering
+./rdsclient.sh -t Environment=prod -t Application=web -t Region=us-east-1
+
+# Tags with special characters
+./rdsclient.sh -t Team=backend-api -t Owner='Platform Team'
 ```
 
 ### Disable SSL
 
 ```bash
-./rdsclient.sh -t Environment -v dev -s false
+./rdsclient.sh -t Environment=dev -s false
 ```
 
 ### With awsenv
@@ -103,10 +120,43 @@ Connecting to analytics-cluster as admin...
 If wrapper scripts are installed, rdsclient works directly:
 
 ```bash
-./rdsclient.sh -t Environment -v prod
+./rdsclient.sh -t Environment=prod -t Application=api
 ```
 
 **Important**: rdsclient cannot be run inside awsenv container (`./awsenv.sh ./rdsclient.sh`) because rdsclient creates its own Docker containers, resulting in Docker-in-Docker issues. Use wrapper script installation method instead.
+
+## Tag Filtering
+
+### Syntax
+- Format: `-t key=value`
+- Multiple filters: `-t key1=value1 -t key2=value2`
+- Logic: All tags must match (AND operation)
+
+### Character Handling
+- First `=` separates key from value
+- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
+- Keys with `=` not supported (extremely rare in practice)
+- Use quotes for spaces: `-t Name='Production DB'`
+- Tag matching is case-sensitive
+
+### Examples
+
+```bash
+# Single tag
+./rdsclient.sh -t Environment=prod
+
+# Two tags (both must match)
+./rdsclient.sh -t Environment=prod -t Application=api
+
+# Three tags for precise filtering
+./rdsclient.sh -t Environment=prod -t Team=data -t Purpose=analytics
+
+# Tag value with equals sign
+./rdsclient.sh -t ConnectionString=host=localhost;port=5432
+
+# Tag value with spaces
+./rdsclient.sh -t Name='Primary Database' -t Owner='DBA Team'
+```
 
 ## Authentication Methods
 
