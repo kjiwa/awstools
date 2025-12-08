@@ -140,30 +140,29 @@ If wrapper scripts are installed, rdsclient works directly:
 ## Authentication Methods
 
 ### Auto-detect (Default)
-Priority: IAM if enabled → Secrets Manager if available → Manual prompt
 
-### IAM
-- Generates temporary token (15 minutes)
-- Requires IAM database authentication enabled
-- No stored credentials
+**Priority:** IAM $\rightarrow$ Secrets Manager $\rightarrow$ Manual prompt.
 
-**Requirements**:
-- Database has IAM authentication enabled
-- IAM user/role has `rds-db:connect` permission
-- Database user configured for IAM
+### IAM (Identity and Access Management)
+
+* Generates a **temporary token (15 minutes)** for connection.
+* **No stored credentials** (token is temporary).
+* Database must have **IAM database authentication enabled**.
+* IAM user/role must have the `rds-db:connect` permission.
+* Corresponding database user must be configured for IAM.
 
 ### Secrets Manager
-- Retrieves credentials from AWS Secrets Manager
-- Supports automatic rotation
-- Used automatically if `MasterUserSecret` configured
 
-**Requirements**:
-- Database has associated secret
-- IAM user/role has `secretsmanager:GetSecretValue` permission
+* Retrieves credentials from **AWS Secrets Manager**.
+* Supports automatic credential rotation.
+* Used automatically if a `MasterUserSecret` is configured for the database.
+* Database must have an associated secret in Secrets Manager.
+* IAM user/role must have the `secretsmanager:GetSecretValue` permission.
 
 ### Manual
-- Interactive password prompt
-- Password not stored or logged
+
+* Uses an **interactive password prompt**.
+* Password is **not stored or logged**.
 
 ## Tag Filtering
 
