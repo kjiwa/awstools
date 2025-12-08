@@ -212,6 +212,12 @@ build_tag_display_message() {
   printf "EC2 instances with %d tag filters" "$TAG_COUNT"
 }
 
+build_tag_filter() {
+  idx="$1"
+  get_tag_at_index "$idx"
+  printf "Name=tag:%s,Values=%s" "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX"
+}
+
 build_ec2_tag_filters() {
   if [ "$TAG_COUNT" -eq 0 ]; then
     printf ""
@@ -221,13 +227,10 @@ build_ec2_tag_filters() {
   filters=""
   i=1
   while [ "$i" -le "$TAG_COUNT" ]; do
-    get_tag_at_index "$i"
-
     if [ -n "$filters" ]; then
       filters="$filters "
     fi
-    filters="${filters}Name=tag:${TAG_KEY_AT_INDEX},Values=${TAG_VALUE_AT_INDEX}"
-
+    filters="$filters$(build_tag_filter "$i")"
     i=$((i + 1))
   done
 
@@ -272,6 +275,17 @@ count_instances() {
   count_lines "$instance_ids"
 }
 
+display_instance_line() {
+  index="$1"
+  id="$2"
+  name="$3"
+  ip="$4"
+
+  display_name="${name:-$id}"
+  display_ip="${ip:-no-public-ip}"
+  printf "%d. %s (%s): %s\n" "$index" "$display_name" "$id" "$display_ip" >&2
+}
+
 display_instances() {
   instance_list="$1"
 
@@ -279,9 +293,7 @@ display_instances() {
   i=1
   printf "%s\n" "$instance_list" | while IFS="$(printf '\t')" read -r id name ip; do
     if [ -n "$id" ]; then
-      display_name="${name:-$id}"
-      display_ip="${ip:-no-public-ip}"
-      printf "%d. %s (%s): %s\n" "$i" "$display_name" "$id" "$display_ip" >&2
+      display_instance_line "$i" "$id" "$name" "$ip"
       i=$((i + 1))
     fi
   done
@@ -346,6 +358,15 @@ get_instance_ip() {
     --output text 2>/dev/null || printf ""
 }
 
+build_ssh_command() {
+  ssh_cmd="ssh -A"
+  if [ -n "$SSH_KEY_FILE" ]; then
+    ssh_cmd="$ssh_cmd -i $SSH_KEY_FILE"
+  fi
+  ssh_cmd="$ssh_cmd $SSH_USER@$1"
+  printf "%s" "$ssh_cmd"
+}
+
 connect_ssh() {
   printf "Connecting to %s via SSH...\n" "$SELECTED_ID" >&2
 
@@ -354,20 +375,19 @@ connect_ssh() {
     error_exit "Instance does not have a public IP address for SSH connection"
   fi
 
-  ssh_cmd="ssh -A"
-  if [ -n "$SSH_KEY_FILE" ]; then
-    ssh_cmd="$ssh_cmd -i $SSH_KEY_FILE"
-  fi
-  ssh_cmd="$ssh_cmd $SSH_USER@$ip_address"
-
+  ssh_cmd=$(build_ssh_command "$ip_address")
   printf "%s\n" "$ssh_cmd" >&2
   exec $ssh_cmd
+}
+
+build_ssm_parameters() {
+  printf '{"command":["%s"]}' "$SSM_COMMAND" | jq -c .
 }
 
 connect_ssm() {
   printf "Connecting to %s via SSM...\n" "$SELECTED_ID" >&2
 
-  command_json=$(printf '{"command":["%s"]}' "$SSM_COMMAND" | jq -c .)
+  command_json=$(build_ssm_parameters)
 
   AWSENV_TTY=always exec $AWS_CMD ssm start-session \
     --target "$SELECTED_ID" \

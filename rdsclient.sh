@@ -289,6 +289,20 @@ get_cluster_endpoints() {
   done
 }
 
+create_temp_file() {
+  temp_dir="${TMPDIR:-/tmp}"
+  temp_base="$temp_dir/rdsclient.$$"
+  counter=0
+
+  while [ -e "$temp_base.$counter" ]; do
+    counter=$((counter + 1))
+  done
+
+  temp_file="$temp_base.$counter"
+  : > "$temp_file"
+  printf "%s" "$temp_file"
+}
+
 assemble_database_list() {
   filtered_instances="$1"
   filtered_clusters="$2"
@@ -325,7 +339,7 @@ query_databases() {
   filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
   filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
 
-  temp_file=$(mktemp)
+  temp_file=$(create_temp_file)
   trap "rm -f $temp_file" EXIT
 
   DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")

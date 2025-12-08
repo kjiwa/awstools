@@ -97,6 +97,18 @@ merge_and_sort_packages() {
   printf "%s" "$all_packages" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
 }
 
+hash_packages() {
+  packages="$1"
+
+  if command -v cksum >/dev/null 2>&1; then
+    printf "%s" "$packages" | cksum | awk '{print $1}'
+  elif command -v sum >/dev/null 2>&1; then
+    printf "%s" "$packages" | sum | awk '{print $1}'
+  else
+    printf "%s" "$packages" | wc -c
+  fi
+}
+
 compute_image_tag() {
   packages="$1"
 
@@ -105,7 +117,7 @@ compute_image_tag() {
     return
   fi
 
-  printf "%s" "$packages" | sha256sum | cut -c1-12
+  hash_packages "$packages"
 }
 
 generate_image_name() {
@@ -218,45 +230,72 @@ is_aws_cli_builtin() {
   test "$1" = "aws" || test "$1" = "aws_completer" || test "$1" = "session-manager-plugin"
 }
 
-resolve_symlink() {
+try_readlink_f() {
   target="$1"
 
   if command -v readlink >/dev/null 2>&1; then
-    if readlink -f "$target" >/dev/null 2>&1; then
-      readlink -f "$target"
+    if readlink -f "$target" 2>/dev/null; then
       return 0
     fi
   fi
 
-  current="$target"
+  return 1
+}
+
+resolve_link_target() {
+  current="$1"
+  link_target="$2"
+
+  case "$link_target" in
+    /*)
+      printf "%s" "$link_target"
+      ;;
+    *)
+      printf "%s/%s" "$(dirname "$current")" "$link_target"
+      ;;
+  esac
+}
+
+canonicalize_path() {
+  path="$1"
+
+  if [ ! -e "$path" ]; then
+    return 1
+  fi
+
+  cd -P "$(dirname "$path")" >/dev/null 2>&1 || return 1
+  printf "%s/%s" "$(pwd -P)" "$(basename "$path")"
+  cd - >/dev/null 2>&1 || true
+}
+
+resolve_symlink_manually() {
+  current="$1"
   max_depth=40
 
   while [ $max_depth -gt 0 ]; do
     if [ ! -L "$current" ]; then
-      if [ -e "$current" ]; then
-        cd -P "$(dirname "$current")" >/dev/null 2>&1 || return 1
-        printf "%s/%s" "$(pwd -P)" "$(basename "$current")"
-        cd - >/dev/null 2>&1 || true
-        return 0
-      else
-        return 1
-      fi
+      canonicalize_path "$current"
+      return $?
     fi
 
     link_target=$(readlink "$current")
-    case "$link_target" in
-    /*)
-      current="$link_target"
-      ;;
-    *)
-      current="$(dirname "$current")/$link_target"
-      ;;
-    esac
-
+    current=$(resolve_link_target "$current" "$link_target")
     max_depth=$((max_depth - 1))
   done
 
   return 1
+}
+
+resolve_symlink() {
+  target="$1"
+
+  resolved=$(try_readlink_f "$target")
+  if [ $? -eq 0 ]; then
+    printf "%s" "$resolved"
+    return 0
+  fi
+
+  resolve_symlink_manually "$target"
 }
 
 find_command_path() {
