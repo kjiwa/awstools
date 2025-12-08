@@ -5,9 +5,9 @@ Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, a
 ## Features
 
 - Multiple tag-based filtering with AND logic
+- Auto-connects with single match
 - SSH and SSM connection methods
 - Works with private instances (SSM)
-- Auto-connects with single match
 - Custom SSM commands
 
 ## Usage
