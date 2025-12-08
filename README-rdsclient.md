@@ -11,7 +11,6 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 - Multiple authentication types
 - SSL/TLS connections (configurable)
 - Docker-based clients (no local installation)
-- PostgreSQL, MySQL, Oracle, SQL Server support
 
 ## Supported Databases
 
@@ -179,13 +178,3 @@ Priority: IAM if enabled → Secrets Manager if available → Manual prompt
 - Keys with `=` not supported (extremely rare in practice)
 - Use quotes for spaces: `-t Name='Production DB'`
 - Tag matching is case-sensitive
-
-## Notes
-
-- Auto-connects with single match
-- Database clients run in Docker (auto-managed)
-- SSL enabled by default
-- Containers auto-cleaned on exit
-- Cannot run inside awsenv container (use wrapper scripts)
-- Tag filtering is case-sensitive
-- IAM tokens expire after 15 minutes

@@ -108,30 +108,21 @@ Install openssh-clients to execute ec2client inside an awsenv container:
 
 ## Connection Methods
 
-### SSM
-- No public IP required
-- Uses AWS Systems Manager
-- Requires SSM agent on instance
-- Instance needs IAM role with `AmazonSSMManagedInstanceCore`
-- Starts POSIX shell (`sh` by default, configurable with `-s`)
-- Works with private VPC instances
+### SSM (AWS Systems Manager Session Manager)
 
-**Requirements**:
-- SSM agent running
-- Instance IAM role with SSM permissions
-- `session-manager-plugin` installed locally (automatic via awsenv)
+* Connects to instances **without public IP** addresses.
+* Utilizes the AWS Systems Manager (SSM) service and the **SSM Agent** running on the instance.
+* Requires the instance to have an **IAM role with the `AmazonSSMManagedInstanceCore` policy**.
+* Starts a **POSIX shell** (default is `sh`, configurable with the `-s` flag).
+* Requires the **`session-manager-plugin`** to be installed locally (handled automatically by `awsenv`).
+* **Ideal for private VPC instances** with no direct internet access.
 
-### SSH
-- Requires public IP
-- Requires SSH key
-- Port 22 must be accessible
-- Uses agent forwarding (`-A`)
+### SSH (Secure Shell)
 
-**Requirements**:
-- Instance has public IP
-- Security group allows SSH (port 22)
-- SSH key file accessible
-- `ssh` command available
+* Connects using the standard Secure Shell protocol.
+* Requires the instance to have a **public IP address** or reachable private IP (via VPN, for example).
+* Requires a **security group rule allowing inbound traffic on TCP Port 22**.
+* Supports **agent forwarding** (using the `-A` flag).
 
 ## Tag Filtering
 
@@ -146,11 +137,3 @@ Install openssh-clients to execute ec2client inside an awsenv container:
 - Keys with `=` not supported (extremely rare in practice)
 - Use quotes for spaces: `-t Name='Web Server'`
 - Tag matching is case-sensitive
-
-## Notes
-
-- Only running instances displayed
-- Auto-connects with single match
-- Tag filtering is case-sensitive
-- SSH uses agent forwarding for convenience
-- Custom SSM commands support complex syntax (semicolons, pipes, quotes)

@@ -159,12 +159,3 @@ output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
 AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
 AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
 ```
-
-## Notes
-
-- Container runs as root
-- Credentials mounted read-only
-- Supports yum/dnf packages (Amazon Linux base)
-- Working directory automatically preserved
-- Arguments with spaces, quotes, and metacharacters preserved correctly
-- Terminal features (paging, colors, interactive tools) work automatically
