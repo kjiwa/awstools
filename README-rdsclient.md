@@ -5,6 +5,7 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 ## Features
 
 - Multiple tag-based filtering with AND logic
+- Auto-connects with single match
 - Auto-detection of authentication methods
 - RDS and Aurora (reader/writer endpoints)
 - Multiple authentication types
