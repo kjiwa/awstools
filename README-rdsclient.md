@@ -163,11 +163,7 @@ Priority: IAM if enabled → Secrets Manager if available → Manual prompt
 
 ### Manual
 - Interactive password prompt
-- Requires `-u` flag for username
 - Password not stored or logged
-
-**Requirements**:
-- Valid database username via `-u`
 
 ## Tag Filtering
 
