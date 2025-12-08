@@ -38,6 +38,20 @@ Examples:
 
 ## Examples
 
+### Basic Usage
+
+```
+$ ./ec2client.sh -t Environment=production -t Lifecycle=managed
+Searching for EC2 instances with 2 tag filters...
+
+1. api-server-01 (i-0123456789abcdef0): 54.123.45.67
+2. api-server-02 (i-0fedcba987654321): 54.123.45.68
+3. worker-node-01 (i-0a1b2c3d4e5f6g7h8): no-public-ip
+
+Select instance (1-3): 3
+Connecting to i-0a1b2c3d4e5f6g7h8 via SSM...
+```
+
 ### SSM Connection (Default)
 
 ```bash
@@ -50,18 +64,6 @@ Examples:
 # Multiple tag filters (AND logic)
 ./ec2client.sh -t Environment=production -t Team=backend
 ./ec2client.sh -t Name=web -t Role=api -t Region=us-east-1
-```
-
-Output:
-```
-Searching for EC2 instances with 2 tag filters...
-
-1. api-server-01 (i-0123456789abcdef0): 54.123.45.67
-2. api-server-02 (i-0fedcba987654321): 54.123.45.68
-3. worker-node-01 (i-0a1b2c3d4e5f6g7h8): no-public-ip
-
-Select instance (1-3): 3
-Connecting to i-0a1b2c3d4e5f6g7h8 via SSM...
 ```
 
 ### SSH Connection
@@ -98,43 +100,10 @@ If wrapper scripts are installed, ec2client works directly:
 ./ec2client.sh -t Environment=prod
 ```
 
-Install openssh-clients when executing inside an awsenv container:
+Install openssh-clients to execute ec2client inside an awsenv container:
 
 ```bash
 ./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
-```
-
-## Tag Filtering
-
-### Syntax
-- Format: `-t key=value`
-- Multiple filters: `-t key1=value1 -t key2=value2`
-- Logic: All tags must match (AND operation)
-
-### Character Handling
-- First `=` separates key from value
-- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
-- Keys with `=` not supported (extremely rare in practice)
-- Use quotes for spaces: `-t Name='Web Server'`
-- Tag matching is case-sensitive
-
-### Examples
-
-```bash
-# Single tag
-./ec2client.sh -t Environment=prod
-
-# Two tags (both must match)
-./ec2client.sh -t Environment=prod -t Team=backend
-
-# Three tags for precise filtering
-./ec2client.sh -t Environment=prod -t Application=api -t Region=us-east-1
-
-# Tag value with equals sign
-./ec2client.sh -t Config=setting=value
-
-# Tag value with spaces
-./ec2client.sh -t Name='My Server' -t Owner='John Doe'
 ```
 
 ## Connection Methods
@@ -163,6 +132,20 @@ Install openssh-clients when executing inside an awsenv container:
 - Security group allows SSH (port 22)
 - SSH key file accessible
 - `ssh` command available
+
+## Tag Filtering
+
+### Syntax
+- Format: `-t key=value`
+- Multiple filters: `-t key1=value1 -t key2=value2`
+- Logic: All tags must match (AND operation)
+
+### Character Handling
+- First `=` separates key from value
+- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
+- Keys with `=` not supported (extremely rare in practice)
+- Use quotes for spaces: `-t Name='Web Server'`
+- Tag matching is case-sensitive
 
 ## Notes
 

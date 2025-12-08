@@ -37,41 +37,6 @@ Examples:
 
 See [main README](README.md#install-awsenv-as-aws-cli) for wrapper script installation instructions.
 
-### Enable Completion (Optional)
-
-**Bash** (`~/.bashrc`):
-```bash
-complete -C aws_completer aws
-```
-
-**Zsh** (`~/.zshrc`):
-```zsh
-autoload -Uz compinit && compinit
-complete -C aws_completer aws
-```
-
-## Terminal Support
-
-awsenv automatically detects interactive terminals and enables full TTY support including paging, colors, and interactive sessions.
-
-**Interactive commands work as expected:**
-```bash
-./awsenv.sh aws help                    # Pages through less/more
-./awsenv.sh aws ssm start-session ...   # Full terminal (vim, arrows)
-```
-
-**Scripting and automation work cleanly:**
-```bash
-./awsenv.sh aws ec2 describe-instances | jq .   # No TTY, clean output
-output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
-```
-
-**Override when needed:**
-```bash
-AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
-AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
-```
-
 ## Examples
 
 ### AWS Commands
@@ -145,14 +110,14 @@ aws ec2 describe-instances \
 
 ### Using with Other Tools
 
-When ec2client and rdsclient have AWS CLI available (via wrapper scripts or local installation), they work seamlessly:
+Ec2client and rdsclient work seamlessly with AWS CLI available, whether via local installation or awsenv wrapper scripts:
 
 ```bash
 ./ec2client.sh -t Environment=prod -t Team=backend
 ./rdsclient.sh -t Application=api -t Environment=staging
 ```
 
-**Note**: rdsclient cannot be run inside awsenv (creates Docker-in-Docker issues). For ec2client with SSH, openssh-clients package is required:
+**Note**: rdsclient cannot be run inside awsenv (creates Docker-in-Docker issues). Openssh-clients is required to run ec2client:
 
 ```bash
 ./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh
@@ -172,6 +137,28 @@ When ec2client and rdsclient have AWS CLI available (via wrapper scripts or loca
 **Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
 
 **Package Files**: One package per line. Lines starting with `#` and empty lines ignored.
+
+## Terminal Support
+
+awsenv automatically detects interactive terminals and enables full TTY support including paging, colors, and interactive sessions.
+
+**Interactive commands work as expected:**
+```bash
+./awsenv.sh aws help                    # Pages through less/more
+./awsenv.sh aws ssm start-session ...   # Full terminal (vim, arrows)
+```
+
+**Scripting and automation work cleanly:**
+```bash
+./awsenv.sh aws ec2 describe-instances | jq .   # No TTY, clean output
+output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
+```
+
+**Override when needed:**
+```bash
+AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
+AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
+```
 
 ## Notes
 

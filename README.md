@@ -4,11 +4,11 @@ POSIX-compliant shell scripts for AWS resource management. Connect to EC2 instan
 
 ## Tools
 
-**awsenv** - Run AWS CLI and scripts in Docker without local installation. Handles credentials, mounts directories, installs packages on demand.
+**[awsenv](README-awsenv.md)** - Run AWS CLI and scripts in Docker without local installation. Handles credentials, mounts directories, installs packages on demand.
 
-**ec2client** - Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, auto-connect when one match found.
+**[ec2client](README-ec2client.md)** - Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, auto-connect when one match found.
 
-**rdsclient** - Connect to RDS/Aurora databases with auto-detected authentication (IAM, Secrets Manager, or manual).
+**[rdsclient](README-rdsclient.md)** - Connect to RDS/Aurora databases with auto-detected authentication (IAM, Secrets Manager, or manual).
 
 ## Quick Examples
 
@@ -29,6 +29,14 @@ POSIX-compliant shell scripts for AWS resource management. Connect to EC2 instan
 ./awsenv.sh aws s3 ls
 ./awsenv.sh -p jq ./process-data.sh
 ```
+
+## Common Features
+
+- Multiple tag-based filtering (AND logic)
+- Interactive selection when multiple matches
+- Auto-connect with single match
+- POSIX-compliant (sh, dash, bash, zsh)
+- Docker-based isolation
 
 ## Installation
 
@@ -62,23 +70,22 @@ EOF
 done
 ```
 
+#### Enable Completion (Optional)
+
+**Bash** (`~/.bashrc`):
+```bash
+complete -C aws_completer aws
+```
+
+**Zsh** (`~/.zshrc`):
+```zsh
+autoload -Uz compinit && compinit
+complete -C aws_completer aws
+```
+
 #### Verify Installation
 
 ```bash
 aws --version
 aws s3 ls
 ```
-
-## Documentation
-
-- [awsenv](README-awsenv.md) - Container environment details, package management, mounting
-- [ec2client](README-ec2client.md) - SSH/SSM connection, tag filtering, custom commands
-- [rdsclient](README-rdsclient.md) - Database clients, authentication methods, SSL configuration
-
-## Common Features
-
-- Multiple tag-based filtering (AND logic)
-- Interactive selection when multiple matches
-- Auto-connect with single match
-- POSIX-compliant (sh, dash, bash, zsh)
-- Docker-based isolation
