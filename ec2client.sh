@@ -247,7 +247,7 @@ query_instances() {
   message=$(build_tag_display_message)
   printf "Searching for %s...\n" "$message" >&2
 
-  $AWS_CMD ec2 describe-instances \
+  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --filters $filters \
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
     --output text 2>/dev/null | sort -t"$(printf '\t')" -k2,2 || printf ""
@@ -340,7 +340,7 @@ select_instance() {
 get_instance_ip() {
   instance_id="$1"
 
-  $AWS_CMD ec2 describe-instances \
+  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --instance-ids "$instance_id" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
     --output text 2>/dev/null || printf ""
@@ -369,7 +369,7 @@ connect_ssm() {
 
   command_json=$(printf '{"command":["%s"]}' "$SSM_COMMAND" | jq -c .)
 
-  $AWS_CMD ssm start-session \
+  AWSENV_TTY=always exec $AWS_CMD ssm start-session \
     --target "$SELECTED_ID" \
     --document-name "AWS-StartInteractiveCommand" \
     --parameters "$command_json"

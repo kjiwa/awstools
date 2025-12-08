@@ -39,11 +39,15 @@ Optional:
                     Can be specified multiple times
   -h                Show this help message
 
+Environment Variables:
+  AWSENV_TTY        Control TTY allocation (always|never|auto, default: auto)
+
 Examples:
   $0 aws s3 ls
   $0 -p vim ./my-script.sh
   $0 -f packages.txt ./rdsclient.sh -t Environment -v prod
   $0 -m \$(pwd)/logs:/logs:ro -m /data:/mnt/data:rw ./process.sh
+  AWSENV_TTY=never $0 aws ec2 describe-instances
 EOF
   exit 1
 }
@@ -330,6 +334,66 @@ add_aws_environment_variables() {
   done
 }
 
+is_stdin_tty() {
+  [ -t 0 ]
+}
+
+should_allocate_tty() {
+  case "${AWSENV_TTY:-auto}" in
+  always) return 0 ;;
+  never) return 1 ;;
+  auto) is_stdin_tty ;;
+  *) is_stdin_tty ;;
+  esac
+}
+
+add_terminal_type() {
+  if [ -n "${TERM:-}" ]; then
+    printf " -e TERM"
+  fi
+}
+
+add_terminal_dimensions() {
+  if [ -n "${COLUMNS:-}" ]; then
+    printf " -e COLUMNS"
+  fi
+  if [ -n "${LINES:-}" ]; then
+    printf " -e LINES"
+  fi
+}
+
+add_terminal_display() {
+  if [ -n "${COLORTERM:-}" ]; then
+    printf " -e COLORTERM"
+  fi
+}
+
+add_pager_variable() {
+  if [ -n "${PAGER:-}" ]; then
+    printf " -e PAGER"
+  fi
+  if [ -n "${AWS_PAGER:-}" ]; then
+    printf " -e AWS_PAGER"
+  fi
+}
+
+add_locale_variables() {
+  if [ -n "${LANG:-}" ]; then
+    printf " -e LANG"
+  fi
+  for var in $(env | grep '^LC_' | cut -d= -f1); do
+    printf " -e %s" "$var"
+  done
+}
+
+add_terminal_environment() {
+  add_terminal_type
+  add_terminal_dimensions
+  add_terminal_display
+  add_pager_variable
+  add_locale_variables
+}
+
 add_user_mounts() {
   for mount in $MOUNTS; do
     printf " -v %s" "$mount"
@@ -347,7 +411,7 @@ add_working_directory() {
 }
 
 determine_docker_tty_flags() {
-  if [ -t 0 ] && [ -t 1 ]; then
+  if should_allocate_tty; then
     printf "%s" "-it"
   else
     printf "%s" "-i"
@@ -359,6 +423,7 @@ build_docker_arguments() {
   DOCKER_ARGS="$tty_flags --rm --entrypoint="
   DOCKER_ARGS="$DOCKER_ARGS$(add_aws_credentials_mount)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_aws_environment_variables)"
+  DOCKER_ARGS="$DOCKER_ARGS$(add_terminal_environment)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_user_mounts)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_command_mount)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_working_directory)"

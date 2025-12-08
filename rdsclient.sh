@@ -319,8 +319,8 @@ query_databases() {
   message=$(build_tag_display_message)
   printf "Searching for %s...\n" "$message" >&2
 
-  instances_json=$($AWS_CMD rds describe-db-instances 2>/dev/null || printf '{"DBInstances":[]}')
-  clusters_json=$($AWS_CMD rds describe-db-clusters 2>/dev/null || printf '{"DBClusters":[]}')
+  instances_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-instances 2>/dev/null || printf '{"DBInstances":[]}')
+  clusters_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-clusters 2>/dev/null || printf '{"DBClusters":[]}')
 
   filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
   filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
@@ -416,11 +416,11 @@ extract_db_field() {
 
 get_database_details() {
   if [ "$DB_TYPE" = "aurora" ]; then
-    details=$($AWS_CMD rds describe-db-clusters --db-cluster-identifier "$DB_IDENTIFIER" 2>/dev/null)
+    details=$(AWSENV_TTY=never $AWS_CMD rds describe-db-clusters --db-cluster-identifier "$DB_IDENTIFIER" 2>/dev/null)
     resource_type="DBClusters"
     field_prefix=""
   else
-    details=$($AWS_CMD rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" 2>/dev/null)
+    details=$(AWSENV_TTY=never $AWS_CMD rds describe-db-instances --db-instance-identifier "$DB_IDENTIFIER" 2>/dev/null)
     resource_type="DBInstances"
     field_prefix="Endpoint."
   fi
@@ -479,7 +479,7 @@ authenticate_iam() {
   printf "Generating IAM authentication token...\n" >&2
 
   FINAL_USER="$MASTER_USER"
-  FINAL_PASSWORD=$($AWS_CMD rds generate-db-auth-token \
+  FINAL_PASSWORD=$(AWSENV_TTY=never $AWS_CMD rds generate-db-auth-token \
     --hostname "$ENDPOINT" \
     --port "$PORT" \
     --username "$MASTER_USER" \
@@ -490,7 +490,7 @@ authenticate_secret() {
   [ -z "$SECRET_ARN" ] && error_exit "No AWS Secrets Manager secret found for this database"
 
   printf "Retrieving credentials from AWS Secrets Manager...\n" >&2
-  secret_value=$($AWS_CMD secretsmanager get-secret-value \
+  secret_value=$(AWSENV_TTY=never $AWS_CMD secretsmanager get-secret-value \
     --secret-id "$SECRET_ARN" \
     --query SecretString \
     --output text 2>/dev/null)
