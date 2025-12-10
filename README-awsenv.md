@@ -159,3 +159,48 @@ output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
 AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
 AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
 ```
+
+## Using awsenv Inside Scripts
+
+When calling AWS CLI commands inside shell scripts for data retrieval, automation, or piping output, **always set `AWSENV_TTY=never`** to prevent terminal interference:
+
+```bash
+#!/bin/sh
+# Get instance data for processing
+instances=$(AWSENV_TTY=never awsenv aws ec2 describe-instances --query 'Reservations[].Instances[]')
+echo "$instances" | jq '.[] | select(.State.Name == "running")'
+
+# List S3 buckets
+AWSENV_TTY=never awsenv aws s3api list-buckets | jq -r '.Buckets[].Name'
+```
+
+### Why `AWSENV_TTY=never` Is Required
+
+awsenv automatically detects interactive terminals and allocates a pseudo-TTY for full terminal support (paging, colors). This behavior is necessary for a good interactive user experience.
+
+When a script using awsenv is launched from an interactive shell, awsenv's TTY detection sees that stdin is connected to a terminal and allocates a pseudo-TTY inside the Docker container, even though the script requires clean, non-interactive output.
+
+This limitation is inherent to the Docker TTY allocation mechanism and environment inheritance. Setting `AWSENV_TTY=never` explicitly forces non-interactive mode, preventing issues that break automation:
+
+  * **Hanging Scripts:** Disables the AWS CLI pager, which otherwise waits for user input.
+  * **Corrupted Output:** Ensures output is clean plain text, preventing ANSI escape codes from interfering with JSON/data parsers (like `jq`).
+  * **Automation Failure:** Guarantees commands behave predictably for capturing output and piping.
+
+### When to Use It
+
+  * Capturing command output: `output=$(awsenv aws ...)`
+  * Piping to processing tools: `awsenv aws ... | jq`
+  * Parsing JSON responses in scripts
+  * Cron jobs or CI/CD pipelines (any non-interactive automation)
+
+### Alternative Setting
+
+For scripts with multiple awsenv calls, set the environment variable once:
+
+```bash
+#!/bin/sh
+export AWSENV_TTY=never
+# All awsenv calls now use non-interactive mode
+instances=$(awsenv aws ec2 describe-instances)
+buckets=$(awsenv aws s3 ls)
+```
