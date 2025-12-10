@@ -12,6 +12,17 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 - SSL/TLS connections (configurable)
 - Docker-based clients (no local installation)
 
+## Prerequisites
+
+- **AWS CLI**
+- **Docker**
+- **AWS credentials** with appropriate permissions
+  - `rds:DescribeDBInstances` and `rds:DescribeDBClusters` for querying databases
+  - `rds-db:connect` for IAM authentication
+  - `secretsmanager:GetSecretValue` for Secrets Manager authentication
+
+**Important**: rdsclient cannot be run inside awsenv containers (`awsenv rdsclient ...`) as it creates Docker-in-Docker issues. If awsenv wrapper scripts are installed, rdsclient works directly with the system-wide AWS CLI.
+
 ## Supported Databases
 
 | Engine | Client | Auth Support |
@@ -49,6 +60,48 @@ Examples:
   rdsclient.sh -u myuser -a manual
   rdsclient.sh -t Environment=dev -s false
 ```
+
+## Authentication Methods
+
+### Auto-detect (Default)
+
+**Priority:** IAM $\rightarrow$ Secrets Manager $\rightarrow$ Manual prompt.
+
+### IAM (Identity and Access Management)
+
+* Generates a **temporary token (15 minutes)** for connection.
+* **No stored credentials** (token is temporary).
+* Database must have **IAM database authentication enabled**.
+* IAM user/role must have the `rds-db:connect` permission.
+* Corresponding database user must be configured for IAM.
+
+### Secrets Manager
+
+* Retrieves credentials from **AWS Secrets Manager**.
+* Supports automatic credential rotation.
+* Used automatically if a `MasterUserSecret` is configured for the database.
+* Database must have an associated secret in Secrets Manager.
+* IAM user/role must have the `secretsmanager:GetSecretValue` permission.
+
+### Manual
+
+* Uses an **interactive password prompt**.
+* Password is **not stored or logged**.
+
+## Tag Filtering
+
+### Syntax
+- Format: `-t key=value`
+- Multiple filters: `-t key1=value1 -t key2=value2`
+- Logic: All tags must match (AND operation)
+
+### Character Handling
+- First `=` separates key from value
+- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
+- Keys with `=` not supported (extremely rare in practice)
+- Use quotes for spaces: `-t Name='Production DB'`
+- Tag matching is case-sensitive
+
 ## Examples
 
 ### Basic Usage
@@ -119,6 +172,9 @@ Connecting to analytics-cluster as admin...
 
 # Tags with special characters
 ./rdsclient.sh -t Team=backend-api -t Owner='Platform Team'
+
+# Tags with equals sign
+./rdsclient.sh -t Team=backend-api -t Config=pool=enabled
 ```
 
 ### Disable SSL
@@ -126,54 +182,3 @@ Connecting to analytics-cluster as admin...
 ```bash
 ./rdsclient.sh -t Environment=dev -s false
 ```
-
-### With awsenv
-
-If wrapper scripts are installed, rdsclient works directly:
-
-```bash
-./rdsclient.sh -t Environment=prod -t Application=api
-```
-
-**Important**: rdsclient cannot be run inside awsenv container (`./awsenv.sh ./rdsclient.sh`) because rdsclient creates its own Docker containers, resulting in Docker-in-Docker issues. Use wrapper script installation method instead.
-
-## Authentication Methods
-
-### Auto-detect (Default)
-
-**Priority:** IAM $\rightarrow$ Secrets Manager $\rightarrow$ Manual prompt.
-
-### IAM (Identity and Access Management)
-
-* Generates a **temporary token (15 minutes)** for connection.
-* **No stored credentials** (token is temporary).
-* Database must have **IAM database authentication enabled**.
-* IAM user/role must have the `rds-db:connect` permission.
-* Corresponding database user must be configured for IAM.
-
-### Secrets Manager
-
-* Retrieves credentials from **AWS Secrets Manager**.
-* Supports automatic credential rotation.
-* Used automatically if a `MasterUserSecret` is configured for the database.
-* Database must have an associated secret in Secrets Manager.
-* IAM user/role must have the `secretsmanager:GetSecretValue` permission.
-
-### Manual
-
-* Uses an **interactive password prompt**.
-* Password is **not stored or logged**.
-
-## Tag Filtering
-
-### Syntax
-- Format: `-t key=value`
-- Multiple filters: `-t key1=value1 -t key2=value2`
-- Logic: All tags must match (AND operation)
-
-### Character Handling
-- First `=` separates key from value
-- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
-- Keys with `=` not supported (extremely rare in practice)
-- Use quotes for spaces: `-t Name='Production DB'`
-- Tag matching is case-sensitive

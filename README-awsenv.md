@@ -37,6 +37,33 @@ Examples:
 
 See [main README](README.md#install-awsenv-as-aws-cli) for wrapper script installation instructions.
 
+## How It Works
+
+**Image Caching**: Generates unique Docker images based on package combinations. Images are reused on subsequent runs with matching packages.
+
+- No packages: `awsenv-cli:base`
+- With packages: `awsenv-cli:<hash>` (12-char hash of sorted package list)
+
+**AWS Credentials**: Mounts `$HOME/.aws` read-only to `/root/.aws` and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.).
+
+**Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
+
+**Package Files**: One package per line. Lines starting with `#` and empty lines ignored.
+
+**Terminal Handling**: Automatically detects interactive terminals using `[ -t 0 ]` and allocates pseudo-TTY when stdin is a TTY. Passes terminal environment variables (TERM, COLUMNS, LINES, PAGER, LANG, LC_*) for proper display and interaction.
+
+Interactive mode enables:
+- AWS CLI pager (less/more)
+- Full terminal support for SSM sessions
+- Colors and formatted output
+
+Non-interactive mode provides:
+- Clean output for parsing
+- No pager interference
+- Suitable for automation
+
+Override automatic detection with `AWSENV_TTY` environment variable (always|never|auto). When using awsenv inside scripts for data processing, set `AWSENV_TTY=never` to prevent TTY allocation issues.
+
 ## Examples
 
 ### AWS Commands
@@ -108,79 +135,54 @@ aws ec2 describe-instances \
   --output table
 ```
 
-### Using with Other Tools
+## Integration with Other Tools
 
-Ec2client and rdsclient work seamlessly with AWS CLI available, whether via local installation or awsenv wrapper scripts:
-
-```bash
-./ec2client.sh -t Environment=prod -t Team=backend
-./rdsclient.sh -t Application=api -t Environment=staging
-```
-
-**Note**: rdsclient cannot be run inside awsenv (creates Docker-in-Docker issues). Openssh-clients is required to run ec2client:
+ec2client and rdsclient work seamlessly when AWS CLI is available, whether via local installation or awsenv wrapper scripts:
 
 ```bash
+# Direct usage with wrapper scripts installed
+ec2client -t Environment=prod -t Team=backend
+rdsclient -t Application=api -t Environment=staging
+
+# Or with explicit awsenv.sh
+./awsenv.sh ./ec2client.sh -t Environment=prod
 ./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh
 ```
 
-## How It Works
+**Important**: rdsclient cannot be run inside awsenv (`./awsenv.sh ./rdsclient.sh`) as it creates Docker-in-Docker issues. Use wrapper script installation instead.
 
-**Image Caching**: Generates unique Docker images based on package combinations. Images are reused on subsequent runs with matching packages.
+## Using awsenv in Shell Scripts
 
-- No packages: `awsenv-cli:base`
-- With packages: `awsenv-cli:<hash>` (12-char hash of sorted package list)
-
-**AWS Credentials**: Mounts `$HOME/.aws` read-only to `/root/.aws` and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.).
-
-**Terminal Handling**: Automatically detects interactive terminals and allocates pseudo-TTY when stdin is a TTY. Passes terminal environment variables (TERM, COLUMNS, LINES, PAGER, LANG, LC_*) for proper display and interaction. Can be overridden with AWSENV_TTY environment variable.
-
-**Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
-
-**Package Files**: One package per line. Lines starting with `#` and empty lines ignored.
-
-## Terminal Support
-
-awsenv automatically detects interactive terminals and enables full TTY support including paging, colors, and interactive sessions.
-
-**Interactive commands work as expected:**
-```bash
-./awsenv.sh aws help                    # Pages through less/more
-./awsenv.sh aws ssm start-session ...   # Full terminal (vim, arrows)
-```
-
-**Scripting and automation work cleanly:**
-```bash
-./awsenv.sh aws ec2 describe-instances | jq .   # No TTY, clean output
-output=$(./awsenv.sh aws s3 ls)                 # Capture works correctly
-```
-
-**Override when needed:**
-```bash
-AWSENV_TTY=never ./awsenv.sh aws ...   # Force non-interactive
-AWSENV_TTY=always ./awsenv.sh aws ...  # Force interactive
-```
-
-## Using awsenv Inside Scripts
-
-When calling AWS CLI commands inside shell scripts for data retrieval, automation, or piping output, **always set `AWSENV_TTY=never`** to prevent terminal interference:
+Scripts can call awsenv to run AWS commands without requiring local AWS CLI installation. For automation and data processing, use `AWSENV_TTY=never` to prevent terminal interference:
 
 ```bash
 #!/bin/sh
 # Get instance data for processing
-instances=$(AWSENV_TTY=never awsenv aws ec2 describe-instances --query 'Reservations[].Instances[]')
-echo "$instances" | jq '.[] | select(.State.Name == "running")'
+instances=$(AWSENV_TTY=never awsenv aws ec2 describe-instances)
+echo "$instances" | jq '.Reservations[].Instances[] | select(.State.Name == "running")'
 
-# List S3 buckets
-AWSENV_TTY=never awsenv aws s3api list-buckets | jq -r '.Buckets[].Name'
+# Process S3 buckets
+AWSENV_TTY=never awsenv aws s3api list-buckets | jq -r '.Buckets[].Name' | while read bucket; do
+  echo "Processing: $bucket"
+done
 ```
 
-### Why `AWSENV_TTY=never` Is Required
+For scripts with multiple AWS calls, set the environment variable once:
+
+```bash
+#!/bin/sh
+export AWSENV_TTY=never
+
+instances=$(awsenv aws ec2 describe-instances)
+buckets=$(awsenv aws s3 ls)
+# All awsenv calls use non-interactive mode
+```
+
+### Why This Is Required
 
 awsenv automatically detects interactive terminals and allocates a pseudo-TTY for full terminal support (paging, colors). This behavior is necessary for a good interactive user experience.
 
-When a script using awsenv is launched from an interactive shell, awsenv's TTY detection sees that stdin is connected to a terminal and allocates a pseudo-TTY inside the Docker container, even though the script requires clean, non-interactive output.
-
-This limitation is inherent to the Docker TTY allocation mechanism and environment inheritance. Setting `AWSENV_TTY=never` explicitly forces non-interactive mode, preventing issues that break automation:
+When a script is launched from an interactive shell, awsenv's TTY detection sees that stdin is connected to a terminal and allocates a pseudo-TTY inside the Docker container, even though the script requires clean, non-interactive output. This limitation is inherent to Docker's TTY allocation mechanism. Setting `AWSENV_TTY=never` explicitly forces non-interactive mode, preventing issues that break automation:
 
   * **Hanging Scripts:** Disables the AWS CLI pager, which otherwise waits for user input.
   * **Corrupted Output:** Ensures output is clean plain text, preventing ANSI escape codes from interfering with JSON/data parsers (like `jq`).
@@ -192,15 +194,3 @@ This limitation is inherent to the Docker TTY allocation mechanism and environme
   * Piping to processing tools: `awsenv aws ... | jq`
   * Parsing JSON responses in scripts
   * Cron jobs or CI/CD pipelines (any non-interactive automation)
-
-### Alternative Setting
-
-For scripts with multiple awsenv calls, set the environment variable once:
-
-```bash
-#!/bin/sh
-export AWSENV_TTY=never
-# All awsenv calls now use non-interactive mode
-instances=$(awsenv aws ec2 describe-instances)
-buckets=$(awsenv aws s3 ls)
-```

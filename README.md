@@ -18,19 +18,6 @@ POSIX-compliant shell scripts for AWS resource management. Connect to EC2 instan
 - POSIX-compliant (sh, dash, bash, zsh)
 - Docker-based isolation
 
-## Quick Start
-
-```bash
-# Use directly without installation
-./ec2client.sh -t Environment=prod
-./rdsclient.sh -t Application=api
-./awsenv.sh aws s3 ls
-
-# Or install for system-wide access
-sudo ./install.sh -d /usr/local/bin -c bash
-aws --version
-```
-
 ## Examples
 
 ```bash
@@ -53,6 +40,13 @@ awsenv -p jq ./process-data.sh
 
 ## Usage
 
+### Prerequisites
+
+- **Docker**
+- **AWS credentials**
+  - AWS CLI configuration files (`~/.aws/config`, `~/.aws/credentials`)
+  - Or environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+
 ### Run Without Installation
 
 The scripts work directly without installation:
@@ -64,15 +58,11 @@ chmod +x *.sh
 ./awsenv.sh aws ec2 describe-instances
 ```
 
-### Install for System-Wide Access (Optional)
+### Install for System-Wide Access
 
 Installation makes the tools available system-wide and provides AWS CLI wrapper functionality.
 
-### Prerequisites
-- Docker
-- AWS credentials (for ec2client and rdsclient)
-
-### Quick Install
+#### Quick Install
 
 ```bash
 # System-wide installation (requires sudo)
@@ -88,7 +78,7 @@ The install script:
 - Creates AWS CLI wrapper scripts (aws, aws_completer, session-manager-plugin)
 - Optionally configures shell completion for bash or zsh
 
-### Manual Installation
+#### Manual Installation
 
 ```bash
 # Copy scripts
@@ -107,7 +97,7 @@ EOF
 done
 ```
 
-### Shell Completion
+#### Shell Completion
 
 **Bash** (`~/.bashrc`):
 ```bash

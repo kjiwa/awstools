@@ -10,6 +10,15 @@ Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, a
 - Works with private instances (SSM)
 - Custom SSM commands
 
+## Prerequisites
+
+- **AWS CLI**
+- **session-manager-plugin**
+- **SSH client**
+- **AWS credentials** with appropriate permissions
+  - `ec2:DescribeInstances` for querying instances
+  - `ssm:StartSession` for SSM connections
+
 ## Usage
 
 ```
@@ -35,6 +44,38 @@ Examples:
   ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
   ec2client.sh -t Environment=staging -s "cd; bash -l"
 ```
+
+## Connection Methods
+
+### SSM (AWS Systems Manager Session Manager)
+
+* Connects to instances **without public IP** addresses.
+* Utilizes the AWS Systems Manager (SSM) service and the **SSM Agent** running on the instance.
+* Requires the instance to have an **IAM role with the `AmazonSSMManagedInstanceCore` policy**.
+* Starts a **POSIX shell** (default is `sh`, configurable with the `-s` flag).
+* Requires the **`session-manager-plugin`** to be installed locally (handled automatically by `awsenv`).
+* **Ideal for private VPC instances** with no direct internet access.
+
+### SSH (Secure Shell)
+
+* Connects using the standard Secure Shell protocol.
+* Requires the instance to have a **public IP address** or reachable private IP (via VPN, for example).
+* Requires a **security group rule allowing inbound traffic on TCP Port 22**.
+* Supports **agent forwarding** (using the `-A` flag).
+
+## Tag Filtering
+
+### Syntax
+- Format: `-t key=value`
+- Multiple filters: `-t key1=value1 -t key2=value2`
+- Logic: All tags must match (AND operation)
+
+### Character Handling
+- First `=` separates key from value
+- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
+- Keys with `=` not supported (extremely rare in practice)
+- Use quotes for spaces: `-t Name='Web Server'`
+- Tag matching is case-sensitive
 
 ## Examples
 
@@ -92,48 +133,32 @@ Connecting to i-0a1b2c3d4e5f6g7h8 via SSM...
 ./ec2client.sh -t Name=dev -s "cd; bash --rcfile ~/.custom_profile"
 ```
 
-### With awsenv
-
-If wrapper scripts are installed, ec2client works directly:
+### Multiple Tag Combinations
 
 ```bash
-./ec2client.sh -t Environment=prod
+# Value with equals sign
+./ec2client.sh -t Team=backend-api -t Config=ssl=enabled
+
+# Spaces in values
+./ec2client.sh -t Team=backend-api -t Name='Production Web Server'
 ```
 
-Install openssh-clients to execute ec2client inside an awsenv container:
+## Using with awsenv
+
+If awsenv wrapper scripts are installed, ec2client works directly:
 
 ```bash
-./awsenv.sh -p openssh-clients ./ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
+ec2client -t Environment=prod
 ```
 
-## Connection Methods
+To run ec2client inside an awsenv container (for environments without local AWS CLI), install openssh-clients for SSH support:
 
-### SSM (AWS Systems Manager Session Manager)
+```bash
+# Connect to EC2 via SSM with awsenv
+awsenv ec2client -t Environment=staging
 
-* Connects to instances **without public IP** addresses.
-* Utilizes the AWS Systems Manager (SSM) service and the **SSM Agent** running on the instance.
-* Requires the instance to have an **IAM role with the `AmazonSSMManagedInstanceCore` policy**.
-* Starts a **POSIX shell** (default is `sh`, configurable with the `-s` flag).
-* Requires the **`session-manager-plugin`** to be installed locally (handled automatically by `awsenv`).
-* **Ideal for private VPC instances** with no direct internet access.
+# Connect to EC2 via SSH with awsenv
+awsenv -p openssh-clients ec2client -t Name=bastion -c ssh -k ~/.ssh/key.pem
+```
 
-### SSH (Secure Shell)
-
-* Connects using the standard Secure Shell protocol.
-* Requires the instance to have a **public IP address** or reachable private IP (via VPN, for example).
-* Requires a **security group rule allowing inbound traffic on TCP Port 22**.
-* Supports **agent forwarding** (using the `-A` flag).
-
-## Tag Filtering
-
-### Syntax
-- Format: `-t key=value`
-- Multiple filters: `-t key1=value1 -t key2=value2`
-- Logic: All tags must match (AND operation)
-
-### Character Handling
-- First `=` separates key from value
-- Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
-- Keys with `=` not supported (extremely rare in practice)
-- Use quotes for spaces: `-t Name='Web Server'`
-- Tag matching is case-sensitive
+**Note**: SSM connections work without additional packages. SSH connections require the openssh-clients package.
