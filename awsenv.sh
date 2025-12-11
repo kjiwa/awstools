@@ -21,6 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
 set -eu
 
 BASE_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
@@ -59,9 +60,7 @@ error_exit() {
 validate_mount_format() {
   case "$1" in
   *:*) return 0 ;;
-  *)
-    error_exit "Invalid mount format '$1'. Expected <local_dir>:<docker_dir>[:(ro|rw)]"
-    ;;
+  *) error_exit "Invalid mount format '$1'. Expected <local_dir>:<docker_dir>[:(ro|rw)]" ;;
   esac
 }
 
@@ -78,7 +77,6 @@ read_packages_from_file() {
 
   while IFS= read -r line || [ -n "$line" ]; do
     line=$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
     case "$line" in
     '' | '#'*) continue ;;
     *) printf "%s " "$line" ;;
@@ -151,7 +149,6 @@ parse_arguments() {
   done
 
   shift $((OPTIND - 1))
-
   if [ $# -eq 0 ]; then
     error_exit "No command specified"
   fi
@@ -246,12 +243,8 @@ resolve_link_target() {
   link_target="$2"
 
   case "$link_target" in
-    /*)
-      printf "%s" "$link_target"
-      ;;
-    *)
-      printf "%s/%s" "$(dirname "$current")" "$link_target"
-      ;;
+  /*) printf "%s" "$link_target" ;;
+  *) printf "%s/%s" "$(dirname "$current")" "$link_target" ;;
   esac
 }
 
@@ -373,16 +366,11 @@ add_aws_environment_variables() {
   done
 }
 
-is_stdin_tty() {
-  [ -t 0 ]
-}
-
 should_allocate_tty() {
   case "${AWSENV_TTY:-auto}" in
   always) return 0 ;;
   never) return 1 ;;
-  auto) is_stdin_tty ;;
-  *) is_stdin_tty ;;
+  *) [ -t 0 ] ;; # Check if standard input is a terminal
   esac
 }
 
@@ -396,6 +384,7 @@ add_terminal_dimensions() {
   if [ -n "${COLUMNS:-}" ]; then
     printf " -e COLUMNS"
   fi
+
   if [ -n "${LINES:-}" ]; then
     printf " -e LINES"
   fi

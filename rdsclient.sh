@@ -299,7 +299,7 @@ create_temp_file() {
   done
 
   temp_file="$temp_base.$counter"
-  : > "$temp_file"
+  : >"$temp_file"
   printf "%s" "$temp_file"
 }
 

@@ -21,6 +21,7 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
+
 set -eu
 
 AWS_PROFILE="${AWS_PROFILE:-}"
@@ -253,8 +254,7 @@ query_instances() {
   AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --filters $filters \
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
-    --output text 2>/dev/null |
-    sort -t"$(printf '\t')" -k2,2 || printf ""
+    --output text 2>/dev/null | sort -t"$(printf '\t')" -k2,2 || printf ""
 }
 
 parse_instance_list() {
@@ -268,6 +268,7 @@ count_lines() {
     printf "0"
     return
   fi
+
   printf "%s\n" "$text" | grep -c .
 }
 
@@ -352,7 +353,6 @@ select_instance() {
 
 get_instance_ip() {
   instance_id="$1"
-
   AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --instance-ids "$instance_id" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
@@ -364,6 +364,7 @@ build_ssh_command() {
   if [ -n "$SSH_KEY_FILE" ]; then
     ssh_cmd="$ssh_cmd -i $SSH_KEY_FILE"
   fi
+
   ssh_cmd="$ssh_cmd $SSH_USER@$1"
   printf "%s" "$ssh_cmd"
 }
@@ -387,9 +388,7 @@ build_ssm_parameters() {
 
 connect_ssm() {
   printf "Connecting to %s via SSM...\n" "$SELECTED_ID" >&2
-
   command_json=$(build_ssm_parameters)
-
   AWSENV_TTY=always exec $AWS_CMD ssm start-session \
     --target "$SELECTED_ID" \
     --document-name "AWS-StartInteractiveCommand" \
@@ -411,10 +410,6 @@ main() {
   build_aws_command
 
   instance_data=$(query_instances)
-  if [ -z "$instance_data" ]; then
-    error_exit "No instances found"
-  fi
-
   select_instance "$instance_data"
   connect
 }

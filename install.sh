@@ -107,10 +107,8 @@ copy_and_rename() {
   dest="$2"
 
   printf "Installing: %s\n" "$dest"
-  cp "$SCRIPT_DIR/$source" "$TARGET_DIR/$dest" ||
-    error_exit "Failed to copy $source to $TARGET_DIR/$dest"
-  chmod +x "$TARGET_DIR/$dest" ||
-    error_exit "Failed to set executable permission on $TARGET_DIR/$dest"
+  cp "$SCRIPT_DIR/$source" "$TARGET_DIR/$dest" || error_exit "Failed to copy $source to $TARGET_DIR/$dest"
+  chmod +x "$TARGET_DIR/$dest" || error_exit "Failed to set executable permission on $TARGET_DIR/$dest"
 }
 
 install_main_scripts() {
@@ -141,6 +139,7 @@ get_user_home() {
   if [ -n "${HOME:-}" ]; then
     printf "%s" "$HOME"
   else
+    # Get home directory from /etc/passwd
     printf "%s" "$(getent passwd "$(id -u)" | cut -d: -f6)"
   fi
 }
