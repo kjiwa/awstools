@@ -250,10 +250,10 @@ query_instances() {
   message=$(build_tag_display_message)
   printf "Searching for %s...\n" "$message" >&2
 
-  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
+  eval "AWSENV_TTY=never \$AWS_CMD ec2 describe-instances \
     --filters $filters \
-    --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
-    --output text 2>/dev/null | sort -t"$(printf '\t')" -k2,2 || printf ""
+    --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==\`Name\`].Value|[0],PublicIpAddress]' \
+    --output text 2>/dev/null" | sort -t"$(printf '\t')" -k2,2 || printf ""
 }
 
 parse_instance_list() {

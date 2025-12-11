@@ -289,8 +289,7 @@ resolve_symlink_manually() {
 resolve_symlink() {
   target="$1"
 
-  resolved=$(try_readlink_f "$target")
-  if [ $? -eq 0 ]; then
+  if resolved=$(try_readlink_f "$target"); then
     printf "%s" "$resolved"
     return 0
   fi

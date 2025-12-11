@@ -158,7 +158,9 @@ To run ec2client inside an awsenv container (for environments without local AWS 
 awsenv ec2client -t Environment=staging
 
 # Connect to EC2 via SSH with awsenv
-awsenv -p openssh-clients ec2client -t Name=bastion -c ssh -k ~/.ssh/key.pem
+# Note: For SSH, the key must be mounted into the container as shown below.
+awsenv -p openssh-clients -m ~/.ssh/key.pem:/keys/key.pem:ro \
+  ec2client -t Name=bastion -c ssh -k /keys/key.pem
 ```
 
 **Note**: SSM connections work without additional packages. SSH connections require the openssh-clients package.

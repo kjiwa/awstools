@@ -340,7 +340,7 @@ query_databases() {
   filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
 
   temp_file=$(create_temp_file)
-  trap "rm -f $temp_file" EXIT
+  trap 'rm -f "$temp_file"' EXIT
 
   DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")
   rm -f "$temp_file"
@@ -458,22 +458,18 @@ get_database_details() {
 determine_client() {
   case "$ENGINE" in
   postgres | aurora-postgresql)
-    CLIENT_TYPE="PostgreSQL"
     DOCKER_IMAGE="postgres:alpine"
     PASSWORD_ENV="PGPASSWORD"
     ;;
   mysql | aurora-mysql | mariadb)
-    CLIENT_TYPE="MySQL/MariaDB"
     DOCKER_IMAGE="mysql:latest"
     PASSWORD_ENV="MYSQL_PWD"
     ;;
   oracle-ee | oracle-ee-cdb | oracle-se2 | oracle-se2-cdb)
-    CLIENT_TYPE="Oracle"
     DOCKER_IMAGE="container-registry.oracle.com/database/instantclient:latest"
     PASSWORD_ENV=""
     ;;
   sqlserver-ee | sqlserver-se | sqlserver-ex | sqlserver-web)
-    CLIENT_TYPE="SQL Server"
     DOCKER_IMAGE="mcr.microsoft.com/mssql-tools"
     PASSWORD_ENV=""
     ;;
