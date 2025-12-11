@@ -340,19 +340,21 @@ resolve_command_location() {
     return 0
   fi
 
-  found_path=$(find_command_path "$CMD")
-  found_exists=$?
-
-  if [ $found_exists -eq 0 ] && [ -e "$found_path" ]; then
-    resolved_path=$(resolve_symlink "$found_path")
-    if [ -z "$resolved_path" ]; then
-      error_exit "Failed to resolve symlink for '$found_path'"
+  if ! found_path=$(find_command_path "$CMD"); then
+    if [ ! -e "$CMD" ]; then
+      error_exit "Command file '$CMD' does not exist"
     fi
-    CMD_PATH="$resolved_path"
-    CMD_MOUNT=$(create_command_mount "$resolved_path")
-  else
+
     CMD_PATH="$CMD"
+    return 0
   fi
+
+  if ! resolved_path=$(resolve_symlink "$found_path"); then
+    error_exit "Failed to resolve symlink for '$found_path'"
+  fi
+
+  CMD_PATH="$resolved_path"
+  CMD_MOUNT=$(create_command_mount "$resolved_path")
 }
 
 add_aws_credentials_mount() {
