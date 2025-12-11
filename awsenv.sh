@@ -21,7 +21,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
 set -eu
 
 BASE_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
@@ -367,7 +366,7 @@ add_aws_environment_variables() {
   for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN \
     AWS_DEFAULT_REGION AWS_REGION AWS_PROFILE \
     AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
-    eval "val=\${$var:-}"
+    val=$(env | sed -n "s/^${var}=//p")
     if [ -n "$val" ]; then
       printf " -e %s" "$var"
     fi

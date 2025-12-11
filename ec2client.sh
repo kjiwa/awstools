@@ -21,7 +21,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
 set -eu
 
 AWS_PROFILE="${AWS_PROFILE:-}"
@@ -250,10 +249,12 @@ query_instances() {
   message=$(build_tag_display_message)
   printf "Searching for %s...\n" "$message" >&2
 
-  eval "AWSENV_TTY=never \$AWS_CMD ec2 describe-instances \
+  # shellcheck disable=SC2086,SC2016
+  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --filters $filters \
-    --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==\`Name\`].Value|[0],PublicIpAddress]' \
-    --output text 2>/dev/null" | sort -t"$(printf '\t')" -k2,2 || printf ""
+    --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
+    --output text 2>/dev/null |
+    sort -t"$(printf '\t')" -k2,2 || printf ""
 }
 
 parse_instance_list() {
