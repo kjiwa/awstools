@@ -24,6 +24,10 @@
 
 set -eu
 
+# ==============================================================================
+# Script Setup
+# ==============================================================================
+
 AWS_PROFILE="${AWS_PROFILE:-}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-2}}"
 CONNECT_METHOD="ssm"
@@ -34,6 +38,10 @@ TAG_VALUES=""
 TAG_COUNT=0
 SELECTED_ID=""
 SSM_COMMAND="sh"
+
+# ==============================================================================
+# User Interface
+# ==============================================================================
 
 usage() {
   cat >&2 <<EOF
@@ -71,9 +79,17 @@ error_exit() {
   exit 1
 }
 
+# ==============================================================================
+# String Utilities
+# ==============================================================================
+
 trim_whitespace() {
   printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
+
+# ==============================================================================
+# Tag Parsing & Validation
+# ==============================================================================
 
 parse_tag_argument() {
   arg="$1"
@@ -134,6 +150,10 @@ get_tag_at_index() {
   TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
 }
 
+# ==============================================================================
+# Argument Parsing
+# ==============================================================================
+
 parse_options() {
   while getopts "p:t:r:c:u:k:s:h" opt; do
     case "$opt" in
@@ -154,6 +174,10 @@ parse_options() {
   done
   shift $((OPTIND - 1))
 }
+
+# ==============================================================================
+# Parameter Validation
+# ==============================================================================
 
 validate_connect_method() {
   case "$CONNECT_METHOD" in
@@ -192,6 +216,10 @@ validate_parameters() {
   validate_profile
 }
 
+# ==============================================================================
+# Dependency Checking
+# ==============================================================================
+
 check_dependencies() {
   for tool in aws jq; do
     command -v "$tool" >/dev/null 2>&1 || error_exit "'$tool' is required but not found"
@@ -208,6 +236,10 @@ check_dependencies() {
   return 0
 }
 
+# ==============================================================================
+# AWS Command Building
+# ==============================================================================
+
 build_aws_command() {
   if [ -n "$AWS_PROFILE" ]; then
     AWS_CMD="aws --profile $AWS_PROFILE --region $REGION"
@@ -215,6 +247,10 @@ build_aws_command() {
     AWS_CMD="aws --region $REGION"
   fi
 }
+
+# ==============================================================================
+# Tag Filtering & Query
+# ==============================================================================
 
 build_tag_display_message() {
   if [ "$TAG_COUNT" -eq 0 ]; then
@@ -272,6 +308,10 @@ query_instances() {
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
     --output text 2>/dev/null | sort -t"$(printf '\t')" -k2,2 || printf ""
 }
+
+# ==============================================================================
+# Instance Selection
+# ==============================================================================
 
 parse_instance_list() {
   instance_list="$1"
@@ -366,6 +406,10 @@ select_instance() {
   SELECTED_ID=$(get_instance_by_index "$instance_ids" "$selection")
 }
 
+# ==============================================================================
+# Connection Operations
+# ==============================================================================
+
 get_instance_ip() {
   instance_id="$1"
   ip=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
@@ -417,6 +461,10 @@ connect() {
   *) error_exit "Connection method must be: ssh or ssm" ;;
   esac
 }
+
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
 
 main() {
   parse_options "$@"

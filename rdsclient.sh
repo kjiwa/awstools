@@ -24,6 +24,10 @@
 
 set -eu
 
+# ==============================================================================
+# Script Setup
+# ==============================================================================
+
 AWS_PROFILE="${AWS_PROFILE:-}"
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-2}}"
 ENDPOINT_TYPE=""
@@ -35,6 +39,10 @@ DB_USER=""
 DB_PASSWORD=""
 CONTAINER_NAME=""
 SSL_MODE="true"
+
+# ==============================================================================
+# User Interface
+# ==============================================================================
 
 usage() {
   cat >&2 <<EOF
@@ -73,11 +81,27 @@ error_exit() {
   exit 1
 }
 
+# ==============================================================================
+# Cleanup Handler
+# ==============================================================================
+
 cleanup() {
   if [ -n "$CONTAINER_NAME" ]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 }
+
+# ==============================================================================
+# String Utilities
+# ==============================================================================
+
+trim_whitespace() {
+  printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+# ==============================================================================
+# User Input
+# ==============================================================================
 
 read_password() {
   printf "Enter database password: " >&2
@@ -90,9 +114,9 @@ read_password() {
   DB_PASSWORD="$password_input"
 }
 
-trim_whitespace() {
-  printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
-}
+# ==============================================================================
+# Tag Parsing & Validation
+# ==============================================================================
 
 parse_tag_argument() {
   arg="$1"
@@ -158,6 +182,10 @@ get_tag_at_index() {
   TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
 }
 
+# ==============================================================================
+# Argument Parsing
+# ==============================================================================
+
 parse_options() {
   while getopts "p:r:e:a:t:u:s:h" opt; do
     case $opt in
@@ -177,6 +205,10 @@ parse_options() {
     esac
   done
 }
+
+# ==============================================================================
+# Parameter Validation
+# ==============================================================================
 
 validate_endpoint_type() {
   [ -n "$ENDPOINT_TYPE" ] || return 0
@@ -226,11 +258,19 @@ validate_parameters() {
   validate_profile
 }
 
+# ==============================================================================
+# Dependency Checking
+# ==============================================================================
+
 check_dependencies() {
   for tool in aws jq docker; do
     command -v "$tool" >/dev/null 2>&1 || error_exit "'$tool' is required but not found"
   done
 }
+
+# ==============================================================================
+# AWS Command Building
+# ==============================================================================
 
 build_aws_command() {
   if [ -n "$AWS_PROFILE" ]; then
@@ -239,6 +279,10 @@ build_aws_command() {
     AWS_CMD="aws --region $AWS_REGION --output json"
   fi
 }
+
+# ==============================================================================
+# Tag Filtering & Query
+# ==============================================================================
 
 build_jq_tag_selector() {
   key="$1"
@@ -277,6 +321,46 @@ filter_by_tags() {
   resource_data=$(printf "%s" "$json_data" | jq ".$resource_type")
   printf "%s" "$resource_data" | jq "$tag_filter"
 }
+
+build_tag_display_message() {
+  if [ "$TAG_COUNT" -eq 0 ]; then
+    printf "all databases"
+    return
+  fi
+
+  if [ "$TAG_COUNT" -eq 1 ]; then
+    get_tag_at_index 1
+    printf "databases with %s=%s" "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX"
+    return
+  fi
+
+  printf "databases with %d tag filters" "$TAG_COUNT"
+}
+
+query_databases() {
+  message=$(build_tag_display_message)
+  printf "Searching for %s...\n" "$message" >&2
+
+  instances_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-instances 2>/dev/null || printf '{"DBInstances":[]}')
+  clusters_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-clusters 2>/dev/null || printf '{"DBClusters":[]}')
+
+  filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
+  filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
+
+  temp_file=$(create_temp_file)
+  trap 'rm -f "$temp_file"' EXIT
+
+  DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")
+  rm -f "$temp_file"
+
+  [ -z "$DATABASE_LIST" ] && error_exit "No databases found matching filters"
+
+  return 0
+}
+
+# ==============================================================================
+# Database List Assembly
+# ==============================================================================
 
 get_standalone_instances() {
   instances_json="$1"
@@ -335,41 +419,9 @@ assemble_database_list() {
   cat "$temp_file"
 }
 
-build_tag_display_message() {
-  if [ "$TAG_COUNT" -eq 0 ]; then
-    printf "all databases"
-    return
-  fi
-
-  if [ "$TAG_COUNT" -eq 1 ]; then
-    get_tag_at_index 1
-    printf "databases with %s=%s" "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX"
-    return
-  fi
-
-  printf "databases with %d tag filters" "$TAG_COUNT"
-}
-
-query_databases() {
-  message=$(build_tag_display_message)
-  printf "Searching for %s...\n" "$message" >&2
-
-  instances_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-instances 2>/dev/null || printf '{"DBInstances":[]}')
-  clusters_json=$(AWSENV_TTY=never $AWS_CMD rds describe-db-clusters 2>/dev/null || printf '{"DBClusters":[]}')
-
-  filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
-  filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
-
-  temp_file=$(create_temp_file)
-  trap 'rm -f "$temp_file"' EXIT
-
-  DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")
-  rm -f "$temp_file"
-
-  [ -z "$DATABASE_LIST" ] && error_exit "No databases found matching filters"
-
-  return 0
-}
+# ==============================================================================
+# Database Selection
+# ==============================================================================
 
 count_lines() {
   text="$1"
@@ -438,6 +490,10 @@ select_database() {
   DB_TYPE=$(printf "%s" "$SELECTED_LINE" | cut -f4)
 }
 
+# ==============================================================================
+# Database Details
+# ==============================================================================
+
 extract_db_field() {
   details="$1"
   resource_type="$2"
@@ -502,6 +558,10 @@ determine_client() {
   esac
 }
 
+# ==============================================================================
+# Authentication
+# ==============================================================================
+
 authenticate_manual() {
   read_password
   FINAL_USER="${DB_USER:-$MASTER_USER}"
@@ -562,6 +622,10 @@ authenticate() {
   esac
 }
 
+# ==============================================================================
+# Connection Operations
+# ==============================================================================
+
 connect_to_postgresql() {
   ssl_mode=""
   [ "$SSL_MODE" = "true" ] && ssl_mode="?sslmode=require"
@@ -598,6 +662,10 @@ connect_database() {
   sqlserver-ee | sqlserver-se | sqlserver-ex | sqlserver-web) connect_to_sqlserver ;;
   esac
 }
+
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
 
 main() {
   trap cleanup EXIT INT TERM HUP
