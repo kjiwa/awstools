@@ -57,71 +57,6 @@ error_exit() {
   exit 1
 }
 
-validate_mount_format() {
-  case "$1" in
-  *:*) return 0 ;;
-  *) error_exit "Invalid mount format '$1'. Expected <local_dir>:<docker_dir>[:(ro|rw)]" ;;
-  esac
-}
-
-read_packages_from_file() {
-  file="$1"
-
-  if [ ! -f "$file" ]; then
-    error_exit "Package file '$file' does not exist"
-  fi
-
-  if [ ! -r "$file" ]; then
-    error_exit "Package file '$file' is not readable"
-  fi
-
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    case "$line" in
-    '' | '#'*) continue ;;
-    *) printf "%s " "$line" ;;
-    esac
-  done <"$file"
-}
-
-merge_and_sort_packages() {
-  all_packages="$1"
-
-  if [ -z "$all_packages" ]; then
-    return
-  fi
-
-  printf "%s" "$all_packages" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
-}
-
-hash_packages() {
-  packages="$1"
-
-  if command -v cksum >/dev/null 2>&1; then
-    printf "%s" "$packages" | cksum | awk '{print $1}'
-  elif command -v sum >/dev/null 2>&1; then
-    printf "%s" "$packages" | sum | awk '{print $1}'
-  else
-    printf "%s" "$packages" | wc -c
-  fi
-}
-
-compute_image_tag() {
-  packages="$1"
-
-  if [ -z "$packages" ]; then
-    printf "base"
-    return
-  fi
-
-  hash_packages "$packages"
-}
-
-generate_image_name() {
-  tag=$(compute_image_tag "$1")
-  printf "%s:%s" "$IMAGE_PREFIX" "$tag"
-}
-
 parse_arguments() {
   PACKAGES=""
   PACKAGE_FILE=""
@@ -129,22 +64,10 @@ parse_arguments() {
 
   while getopts "p:f:m:h" opt; do
     case "$opt" in
-    p)
-      PACKAGES="$PACKAGES $OPTARG"
-      ;;
-    f)
-      PACKAGE_FILE="$OPTARG"
-      ;;
-    m)
-      validate_mount_format "$OPTARG"
-      MOUNTS="$MOUNTS $OPTARG"
-      ;;
-    h)
-      usage
-      ;;
-    *)
-      usage
-      ;;
+    p) PACKAGES="$PACKAGES $OPTARG" ;;
+    f) PACKAGE_FILE="$OPTARG" ;;
+    m) MOUNTS="$MOUNTS $OPTARG" ;;
+    *) usage ;;
     esac
   done
 
@@ -159,10 +82,94 @@ parse_arguments() {
   CMD_ARGS_START=$((OPTIND + 1))
 }
 
-verify_docker_installed() {
-  if ! command -v docker >/dev/null 2>&1; then
-    error_exit "docker is not installed or not in PATH"
+validate_parameters() {
+  OLD_IFS="$IFS"
+
+  # shellcheck disable=SC2086
+  IFS=" " set -- $MOUNTS
+  IFS="$OLD_IFS"
+
+  for mount in "$@"; do
+    validate_mount_format "$mount"
+  done
+}
+
+validate_mount_format() {
+  mount="$1"
+
+  OLD_IFS="$IFS"
+  IFS=":"
+
+  # shellcheck disable=SC2086
+  set -- $mount
+  IFS="$OLD_IFS"
+
+  local_dir="$1"
+  mode="$3"
+  count=$#
+
+  [ "$count" -lt 2 ] && error_exit "Invalid mount format '$mount'."
+  [ "$count" -gt 3 ] && error_exit "Invalid mount format '$mount'."
+  if [ "$count" -eq 3 ]; then
+    case "$mode" in
+    ro | rw) ;;
+    *) error_exit "Invalid mount mode '$mode'. Expected 'ro' or 'rw'." ;;
+    esac
   fi
+
+  [ ! -d "$local_dir" ] && error_exit "Mount directory '$local_dir' does not exist."
+  [ ! -r "$local_dir" ] && error_exit "Mount directory '$local_dir' is not readable."
+
+  return 0
+}
+
+check_dependencies() {
+  command -v docker >/dev/null 2>&1 || error_exit "docker is required but not found"
+}
+
+read_packages_from_file() {
+  file="$1"
+  [ ! -f "$file" ] && error_exit "Package file '$file' does not exist"
+  [ ! -r "$file" ] && error_exit "Package file '$file' is not readable"
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$line" in
+    '' | '#'*) continue ;;
+    *) printf "%s " "$line" ;;
+    esac
+  done <"$file"
+}
+
+merge_and_sort_packages() {
+  all_packages="$1"
+  [ -z "$all_packages" ] && return
+  printf "%s" "$all_packages" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' '
+}
+
+hash_packages() {
+  packages="$1"
+  if command -v cksum >/dev/null 2>&1; then
+    printf "%s" "$packages" | cksum | awk '{print $1}'
+  elif command -v sum >/dev/null 2>&1; then
+    printf "%s" "$packages" | sum | awk '{print $1}'
+  else
+    printf "%s" "$packages" | wc -c
+  fi
+}
+
+compute_image_tag() {
+  packages="$1"
+  if [ -z "$packages" ]; then
+    printf "base"
+    return
+  fi
+
+  hash_packages "$packages"
+}
+
+generate_image_name() {
+  printf "%s:%s" "$IMAGE_PREFIX" "$(compute_image_tag "$1")"
 }
 
 image_exists() {
@@ -171,16 +178,11 @@ image_exists() {
 
 create_dockerfile() {
   sorted_packages="$1"
-
   install_cmd="yum install -y unzip"
-
-  if [ -n "$sorted_packages" ]; then
-    install_cmd="$install_cmd $sorted_packages"
-  fi
+  [ -n "$sorted_packages" ] && install_cmd="$install_cmd $sorted_packages"
 
   cat <<EOF
 FROM $BASE_IMAGE
-
 RUN $install_cmd && \\
     curl -sSL -o /tmp/session-manager-plugin.rpm \\
     https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm && \\
@@ -191,35 +193,23 @@ EOF
 }
 
 build_custom_image() {
-  image_name="$1"
-  sorted_packages="$2"
+  sorted_packages="$1"
 
-  if image_exists "$image_name"; then
-    return 0
-  fi
+  image_exists "$IMAGE" && return 0
 
-  echo "Building custom image: $image_name" >&2
-
-  if [ -n "$sorted_packages" ]; then
-    echo "Installing packages: $sorted_packages" >&2
-  fi
-
-  create_dockerfile "$sorted_packages" | docker build -t "$image_name" -
+  echo "Building custom image: $IMAGE" >&2
+  [ -n "$sorted_packages" ] && echo "Installing packages: $sorted_packages" >&2
+  create_dockerfile "$sorted_packages" | docker build -t "$IMAGE" -
 }
 
 determine_image() {
   file_packages=""
-  if [ -n "$PACKAGE_FILE" ]; then
-    file_packages=$(read_packages_from_file "$PACKAGE_FILE")
-  fi
-
+  [ -n "$PACKAGE_FILE" ] && file_packages=$(read_packages_from_file "$PACKAGE_FILE")
   all_packages="$PACKAGES $file_packages"
-  SORTED_PACKAGES=$(merge_and_sort_packages "$all_packages")
-  SORTED_PACKAGES=$(printf "%s" "$SORTED_PACKAGES" | sed 's/[[:space:]]*$//')
-
-  IMAGE=$(generate_image_name "$SORTED_PACKAGES")
-
-  build_custom_image "$IMAGE" "$SORTED_PACKAGES"
+  sorted_packages=$(merge_and_sort_packages "$all_packages")
+  sorted_packages=$(printf "%s" "$sorted_packages" | sed 's/[[:space:]]*$//')
+  IMAGE=$(generate_image_name "$sorted_packages")
+  build_custom_image "$sorted_packages"
 }
 
 is_aws_cli_builtin() {
@@ -229,13 +219,8 @@ is_aws_cli_builtin() {
 try_readlink_f() {
   target="$1"
 
-  if command -v readlink >/dev/null 2>&1; then
-    if readlink -f "$target" 2>/dev/null; then
-      return 0
-    fi
-  fi
-
-  return 1
+  command -v readlink >/dev/null 2>&1 || return 1
+  readlink -f "$target" 2>/dev/null
 }
 
 resolve_link_target() {
@@ -250,10 +235,7 @@ resolve_link_target() {
 
 canonicalize_path() {
   path="$1"
-
-  if [ ! -e "$path" ]; then
-    return 1
-  fi
+  [ ! -e "$path" ] && return 1
 
   cd -P "$(dirname "$path")" >/dev/null 2>&1 || return 1
   printf "%s/%s" "$(pwd -P)" "$(basename "$path")"
@@ -280,7 +262,6 @@ resolve_symlink_manually() {
 
 resolve_symlink() {
   target="$1"
-
   if resolved=$(try_readlink_f "$target"); then
     printf "%s" "$resolved"
     return 0
@@ -290,36 +271,28 @@ resolve_symlink() {
 }
 
 find_command_path() {
-  command_name="$1"
+  [ -d "$CMD" ] && return 1
 
-  if [ -x "./$command_name" ]; then
-    printf "%s" "$(pwd)/$command_name"
+  if [ -f "./$CMD" ] && [ -x "./$CMD" ]; then
+    printf "%s" "$(pwd)/$CMD"
     return 0
   fi
 
-  if [ -x "$command_name" ]; then
-    printf "%s" "$command_name"
-    return 0
-  fi
-
-  cmd_location=$(command -v "$command_name" 2>/dev/null || true)
+  cmd_location=$(command -v "$CMD" 2>/dev/null || true)
   if [ -n "$cmd_location" ]; then
     printf "%s" "$cmd_location"
     return 0
   fi
 
-  printf "%s" "$command_name"
   return 1
 }
 
 create_command_mount() {
-  command_path="$1"
-
-  if [ -z "$command_path" ] || [ ! -e "$command_path" ]; then
+  if [ -z "$CMD_PATH" ] || [ ! -e "$CMD_PATH" ]; then
     return 0
   fi
 
-  cmd_dir="$(dirname "$command_path")"
+  cmd_dir="$(dirname "$CMD_PATH")"
   printf "%s %s:%s:ro" "-v" "$cmd_dir" "$cmd_dir"
 }
 
@@ -332,38 +305,25 @@ resolve_command_location() {
     return 0
   fi
 
-  if ! found_path=$(find_command_path "$CMD"); then
-    if [ ! -e "$CMD" ]; then
-      error_exit "Command file '$CMD' does not exist"
-    fi
-
-    CMD_PATH="$CMD"
-    return 0
-  fi
-
-  if ! resolved_path=$(resolve_symlink "$found_path"); then
-    error_exit "Failed to resolve symlink for '$found_path'"
-  fi
-
+  found_path=$(find_command_path) || error_exit "Command '$CMD' does not exist or is not an executable file"
+  resolved_path=$(resolve_symlink "$found_path") || error_exit "Failed to resolve symlink for '$found_path'"
   CMD_PATH="$resolved_path"
-  CMD_MOUNT=$(create_command_mount "$resolved_path")
+  CMD_MOUNT=$(create_command_mount)
 }
 
 add_aws_credentials_mount() {
-  if [ -d "$HOME/.aws" ]; then
-    printf " -v %s:/root/.aws:ro" "$HOME/.aws"
-  fi
+  [ -d "$HOME/.aws" ] && printf " -v %s:/root/.aws:ro" "$HOME/.aws"
+  return 0
 }
 
 add_aws_environment_variables() {
   for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN \
     AWS_DEFAULT_REGION AWS_REGION AWS_PROFILE \
     AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
-    val=$(env | sed -n "s/^${var}=//p")
-    if [ -n "$val" ]; then
-      printf " -e %s" "$var"
-    fi
+    [ -n "$(env | sed -n "s/^${var}=//p")" ] && printf " -e %s" "$var"
   done
+
+  return 0
 }
 
 should_allocate_tty() {
@@ -372,46 +332,40 @@ should_allocate_tty() {
   never) return 1 ;;
   *) [ -t 0 ] ;; # Check if standard input is a terminal
   esac
+
+  return 0
 }
 
 add_terminal_type() {
-  if [ -n "${TERM:-}" ]; then
-    printf " -e TERM"
-  fi
+  [ -n "${TERM:-}" ] && printf " -e TERM"
+  return 0
 }
 
 add_terminal_dimensions() {
-  if [ -n "${COLUMNS:-}" ]; then
-    printf " -e COLUMNS"
-  fi
-
-  if [ -n "${LINES:-}" ]; then
-    printf " -e LINES"
-  fi
+  [ -n "${COLUMNS:-}" ] && printf " -e COLUMNS"
+  [ -n "${LINES:-}" ] && printf " -e LINES"
+  return 0
 }
 
 add_terminal_display() {
-  if [ -n "${COLORTERM:-}" ]; then
-    printf " -e COLORTERM"
-  fi
+  [ -n "${COLORTERM:-}" ] && printf " -e COLORTERM"
+  return 0
 }
 
 add_pager_variable() {
-  if [ -n "${PAGER:-}" ]; then
-    printf " -e PAGER"
-  fi
-  if [ -n "${AWS_PAGER:-}" ]; then
-    printf " -e AWS_PAGER"
-  fi
+  [ -n "${PAGER:-}" ] && printf " -e PAGER"
+  [ -n "${AWS_PAGER:-}" ] && printf " -e AWS_PAGER"
+  return 0
 }
 
 add_locale_variables() {
-  if [ -n "${LANG:-}" ]; then
-    printf " -e LANG"
-  fi
+  [ -n "${LANG:-}" ] && printf " -e LANG"
+
   for var in $(env | grep '^LC_' | cut -d= -f1); do
     printf " -e %s" "$var"
   done
+
+  return 0
 }
 
 add_terminal_environment() {
@@ -459,14 +413,13 @@ build_docker_arguments() {
 
 main() {
   parse_arguments "$@"
-
-  shift $((CMD_ARGS_START - 1))
-
-  verify_docker_installed
+  validate_parameters
+  check_dependencies
   determine_image
   resolve_command_location
   build_docker_arguments
 
+  shift $((CMD_ARGS_START - 1))
   exec docker run $DOCKER_ARGS "$IMAGE" "$CMD_PATH" "$@"
 }
 
