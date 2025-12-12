@@ -209,6 +209,7 @@ append_completion() {
   rc_file="$1"
   commands="$2"
 
+  touch "$rc_file" || error_exit "Failed to create RC file: $rc_file"
   printf "\n# AWS CLI completion (added by install.sh)\n" >>"$rc_file"
   printf "%s\n" "$commands" >>"$rc_file"
 }
@@ -252,8 +253,12 @@ print_success() {
     printf "\nShell completion configured for: %s\n" "$INSTALL_COMPLETION"
   fi
 
-  printf "\nVerify installation:\n"
-  printf "  %s/aws --version\n" "$TARGET_DIR"
+  printf "\nVerifying installation:\n"
+  if "$TARGET_DIR/awsenv" aws --version >/dev/null 2>&1; then
+    printf "  %s/aws --version ... OK\n" "$TARGET_DIR"
+  else
+    printf "  %s/aws --version ... WARNING: Verification failed\n" "$TARGET_DIR"
+  fi
 }
 
 # ==============================================================================

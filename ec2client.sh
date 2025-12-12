@@ -137,8 +137,10 @@ accumulate_tags() {
     TAG_KEYS="$key"
     TAG_VALUES="$value"
   else
-    TAG_KEYS="$TAG_KEYS $key"
-    TAG_VALUES="$TAG_VALUES $value"
+    TAG_KEYS="$TAG_KEYS
+$key"
+    TAG_VALUES="$TAG_VALUES
+$value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -242,9 +244,9 @@ check_dependencies() {
 
 build_aws_command() {
   if [ -n "$AWS_PROFILE" ]; then
-    AWS_CMD="aws --profile $AWS_PROFILE --region $REGION"
+    AWS_CMD="aws --profile $AWS_PROFILE --region $REGION --output text"
   else
-    AWS_CMD="aws --region $REGION"
+    AWS_CMD="aws --region $REGION --output text"
   fi
 }
 
@@ -303,10 +305,12 @@ query_instances() {
   printf "Searching for %s...\n" "$message" >&2
 
   # shellcheck disable=SC2086,SC2016
-  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
+  result=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --filters $filters \
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
-    --output text 2>/dev/null | sort -t"$(printf '\t')" -k2,2 || printf ""
+    2>/dev/null) || error_exit "Failed to query EC2 instances"
+
+  printf "%s" "$result" | sort -t"$(printf '\t')" -k2,2
 }
 
 # ==============================================================================
@@ -415,7 +419,7 @@ get_instance_ip() {
   ip=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --instance-ids "$instance_id" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
-    --output text 2>/dev/null || printf "")
+    2>/dev/null || printf "")
 
   case "$ip" in
   "" | "None" | "null") printf "" ;;

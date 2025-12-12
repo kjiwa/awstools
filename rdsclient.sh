@@ -169,8 +169,10 @@ accumulate_tags() {
     TAG_KEYS="$key"
     TAG_VALUES="$value"
   else
-    TAG_KEYS="$TAG_KEYS $key"
-    TAG_VALUES="$TAG_VALUES $value"
+    TAG_KEYS="$TAG_KEYS
+$key"
+    TAG_VALUES="$TAG_VALUES
+$value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -292,7 +294,7 @@ build_jq_tag_selector() {
 
 build_rds_tag_filter() {
   if [ "$TAG_COUNT" -eq 0 ]; then
-    printf "."
+    printf ""
     return
   fi
 
@@ -310,7 +312,7 @@ build_rds_tag_filter() {
     i=$((i + 1))
   done
 
-  printf "[.[] | %s]" "$filter"
+  printf "%s" "$filter"
 }
 
 filter_by_tags() {
@@ -318,8 +320,12 @@ filter_by_tags() {
   resource_type="$2"
 
   tag_filter=$(build_rds_tag_filter)
-  resource_data=$(printf "%s" "$json_data" | jq ".$resource_type")
-  printf "%s" "$resource_data" | jq "$tag_filter"
+  
+  if [ -z "$tag_filter" ]; then
+    printf "%s" "$json_data" | jq ".$resource_type | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
+  else
+    printf "%s" "$json_data" | jq ".$resource_type | [.[] | $tag_filter] | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
+  fi
 }
 
 build_tag_display_message() {
@@ -351,9 +357,8 @@ query_databases() {
   trap 'rm -f "$temp_file"' EXIT
 
   DATABASE_LIST=$(assemble_database_list "$filtered_instances" "$filtered_clusters" "$temp_file")
-  rm -f "$temp_file"
 
-  [ -z "$DATABASE_LIST" ] && error_exit "No databases found matching filters"
+  [ -z "$DATABASE_LIST" ] && error_exit "No databases found"
 
   return 0
 }
@@ -364,15 +369,14 @@ query_databases() {
 
 get_standalone_instances() {
   instances_json="$1"
-  printf "%s" "$instances_json" | jq '[.[] | select(.DBClusterIdentifier == null or .DBClusterIdentifier == "")] | sort_by(.DBInstanceIdentifier)' |
-    jq -r '.[] | [.DBInstanceIdentifier, .Engine, .Endpoint.Address, "rds"] | @tsv'
+  printf "%s" "$instances_json" | jq -r '.[] | select(.DBClusterIdentifier == null or .DBClusterIdentifier == "") | [.DBInstanceIdentifier, .Engine, .Endpoint.Address, "rds"] | @tsv'
 }
 
 get_cluster_endpoints() {
   clusters_json="$1"
   endpoint_type="$2"
 
-  printf "%s" "$clusters_json" | jq -c 'sort_by(.DBClusterIdentifier) | .[]' | while read -r cluster; do
+  printf "%s" "$clusters_json" | jq -c '.[]' | while read -r cluster; do
     cluster_id=$(printf "%s" "$cluster" | jq -r '.DBClusterIdentifier')
     engine=$(printf "%s" "$cluster" | jq -r '.Engine')
     writer_endpoint=$(printf "%s" "$cluster" | jq -r '.Endpoint')
@@ -474,7 +478,6 @@ read_user_selection() {
 select_database() {
   count=$(count_lines "$DATABASE_LIST")
 
-  [ "$count" -eq 0 ] && error_exit "No databases found"
   if [ "$count" -eq 1 ]; then
     printf "Connecting to database...\n" >&2
     selection=1

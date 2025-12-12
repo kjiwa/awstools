@@ -30,6 +30,7 @@ set -eu
 
 BASE_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
 IMAGE_PREFIX="awsenv-cli"
+MOUNT_SEPARATOR="$(printf '\036')"
 
 # ==============================================================================
 # User Interface
@@ -123,14 +124,17 @@ validate_mount_format() {
 }
 
 validate_mounts() {
+  [ -z "$MOUNTS" ] && return 0
+
   OLD_IFS="$IFS"
+  IFS="$MOUNT_SEPARATOR"
 
   # shellcheck disable=SC2086
-  IFS=" " set -- $MOUNTS
+  set -- $MOUNTS
   IFS="$OLD_IFS"
 
   for mount in "$@"; do
-    validate_mount_format "$mount"
+    [ -n "$mount" ] && validate_mount_format "$mount"
   done
 }
 
@@ -152,7 +156,13 @@ parse_arguments() {
     case "$opt" in
     p) PACKAGES="$PACKAGES $OPTARG" ;;
     f) PACKAGE_FILE="$OPTARG" ;;
-    m) MOUNTS="$MOUNTS $OPTARG" ;;
+    m)
+      if [ -z "$MOUNTS" ]; then
+        MOUNTS="$OPTARG"
+      else
+        MOUNTS="$MOUNTS${MOUNT_SEPARATOR}$OPTARG"
+      fi
+      ;;
     *) usage ;;
     esac
   done
@@ -437,8 +447,17 @@ add_terminal_environment() {
 }
 
 add_user_mounts() {
-  for mount in $MOUNTS; do
-    printf " -v %s" "$mount"
+  [ -z "$MOUNTS" ] && return 0
+
+  OLD_IFS="$IFS"
+  IFS="$MOUNT_SEPARATOR"
+
+  # shellcheck disable=SC2086
+  set -- $MOUNTS
+  IFS="$OLD_IFS"
+
+  for mount in "$@"; do
+    [ -n "$mount" ] && printf " -v %s" "$mount"
   done
 }
 
