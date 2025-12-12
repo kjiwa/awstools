@@ -27,6 +27,10 @@ set -eu
 BASE_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
 IMAGE_PREFIX="awsenv-cli"
 
+# ==============================================================================
+# Core Utilities & Error Handling
+# ==============================================================================
+
 usage() {
   cat >&2 <<EOF
 Usage: $0 [OPTIONS] <command> [args...]
@@ -57,6 +61,84 @@ error_exit() {
   exit 1
 }
 
+is_valid_identifier() {
+  case "$1" in
+  *[!A-Za-z0-9_]* | [0-9]* | "") return 1 ;;
+  *) return 0 ;;
+  esac
+}
+
+# ==============================================================================
+# Input Validation
+# ==============================================================================
+
+validate_command_name() {
+  case "$1" in
+  *[\'\"\`\$\&\|\;\<\>\(\)\{\}\[\]]*) error_exit "Command name contains invalid characters" ;;
+  "") error_exit "Command name cannot be empty" ;;
+  esac
+}
+
+validate_docker_path() {
+  path="$1"
+  case "$path" in
+  *..*) error_exit "Docker path '$path' cannot contain '..'" ;;
+  esac
+}
+
+validate_mount_format() {
+  mount="$1"
+
+  OLD_IFS="$IFS"
+  IFS=":"
+
+  # shellcheck disable=SC2086
+  set -- $mount
+  IFS="$OLD_IFS"
+
+  count=$#
+  [ "$count" -lt 2 ] && error_exit "Invalid mount format '$mount'"
+  [ "$count" -gt 3 ] && error_exit "Invalid mount format '$mount'"
+
+  local_dir="$1"
+  docker_dir="$2"
+
+  if [ "$count" -eq 3 ]; then
+    mode="$3"
+    case "$mode" in
+    ro | rw) ;;
+    *) error_exit "Invalid mount mode '$mode'. Expected 'ro' or 'rw'" ;;
+    esac
+  fi
+
+  [ ! -d "$local_dir" ] && error_exit "Mount directory '$local_dir' does not exist"
+  [ ! -r "$local_dir" ] && error_exit "Mount directory '$local_dir' is not readable"
+  validate_docker_path "$docker_dir"
+
+  return 0
+}
+
+validate_mounts() {
+  OLD_IFS="$IFS"
+
+  # shellcheck disable=SC2086
+  IFS=" " set -- $MOUNTS
+  IFS="$OLD_IFS"
+
+  for mount in "$@"; do
+    validate_mount_format "$mount"
+  done
+}
+
+validate_parameters() {
+  validate_command_name "$CMD"
+  validate_mounts
+}
+
+# ==============================================================================
+# Argument Parsing
+# ==============================================================================
+
 parse_arguments() {
   PACKAGES=""
   PACKAGE_FILE=""
@@ -82,80 +164,9 @@ parse_arguments() {
   CMD_ARGS_START=$((OPTIND + 1))
 }
 
-validate_parameters() {
-  validate_command_name "$CMD"
-  validate_mounts
-}
-
-is_valid_identifier() {
-  case "$1" in
-  *[!A-Za-z0-9_]* | [0-9]* | "") return 1 ;;
-  *) return 0 ;;
-  esac
-}
-
-validate_command_name() {
-  case "$1" in
-  *[./\\]*) error_exit "Command name cannot contain path separators" ;;
-  *[\'\"\`\$\&\|\;\<\>\(\)\{\}\[\]]*) error_exit "Command name contains invalid characters" ;;
-  "") error_exit "Command name cannot be empty" ;;
-  esac
-}
-
-validate_docker_path() {
-  path="$1"
-  case "$path" in
-  *..*) error_exit "Docker path '$path' cannot contain '..'" ;;
-  esac
-}
-
-validate_mounts() {
-  OLD_IFS="$IFS"
-
-  # shellcheck disable=SC2086
-  IFS=" " set -- $MOUNTS
-  IFS="$OLD_IFS"
-
-  for mount in "$@"; do
-    validate_mount_format "$mount"
-  done
-}
-
-validate_mount_format() {
-  mount="$1"
-
-  OLD_IFS="$IFS"
-  IFS=":"
-
-  # shellcheck disable=SC2086
-  set -- $mount
-  IFS="$OLD_IFS"
-
-  local_dir="$1"
-  docker_dir="$2"
-  mode="$3"
-  count=$#
-
-  [ "$count" -lt 2 ] && error_exit "Invalid mount format '$mount'"
-  [ "$count" -gt 3 ] && error_exit "Invalid mount format '$mount'"
-  if [ "$count" -eq 3 ]; then
-    case "$mode" in
-    ro | rw) ;;
-    *) error_exit "Invalid mount mode '$mode'. Expected 'ro' or 'rw'" ;;
-    esac
-  fi
-
-  [ ! -d "$local_dir" ] && error_exit "Mount directory '$local_dir' does not exist"
-  [ ! -r "$local_dir" ] && error_exit "Mount directory '$local_dir' is not readable"
-
-  validate_docker_path "$docker_dir"
-
-  return 0
-}
-
-check_dependencies() {
-  command -v docker >/dev/null 2>&1 || error_exit "docker is required but not found"
-}
+# ==============================================================================
+# Package Management
+# ==============================================================================
 
 read_packages_from_file() {
   file="$1"
@@ -187,6 +198,10 @@ hash_packages() {
     printf "%s" "$packages" | wc -c
   fi
 }
+
+# ==============================================================================
+# Docker Image Operations
+# ==============================================================================
 
 compute_image_tag() {
   packages="$1"
@@ -242,13 +257,16 @@ determine_image() {
   build_custom_image "$sorted_packages"
 }
 
+# ==============================================================================
+# Command & Path Resolution
+# ==============================================================================
+
 is_aws_cli_builtin() {
   test "$1" = "aws" || test "$1" = "aws_completer" || test "$1" = "session-manager-plugin"
 }
 
 try_readlink_f() {
   target="$1"
-
   command -v readlink >/dev/null 2>&1 || return 1
   readlink -f "$target" 2>/dev/null
 }
@@ -340,6 +358,10 @@ resolve_command_location() {
   CMD_PATH="$resolved_path"
   CMD_MOUNT=$(create_command_mount)
 }
+
+# ==============================================================================
+# Docker Environment Configuration
+# ==============================================================================
 
 add_aws_credentials_mount() {
   [ -d "$HOME/.aws" ] && printf " -v %s:/root/.aws:ro" "$HOME/.aws"
@@ -444,6 +466,18 @@ build_docker_arguments() {
   DOCKER_ARGS="$DOCKER_ARGS$(add_command_mount)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_working_directory)"
 }
+
+# ==============================================================================
+# Dependency Checking
+# ==============================================================================
+
+check_dependencies() {
+  command -v docker >/dev/null 2>&1 || error_exit "docker is required but not found"
+}
+
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
 
 main() {
   parse_arguments "$@"
