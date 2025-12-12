@@ -87,7 +87,6 @@ read_password() {
   printf "\n" >&2
 
   [ -z "$password_input" ] && error_exit "Password cannot be empty"
-
   DB_PASSWORD="$password_input"
 }
 
@@ -115,19 +114,24 @@ validate_tag_format() {
   key="$2"
   value="$3"
 
-  if [ -z "$key" ]; then
-    error_exit "Invalid tag format '$original': must contain '=' character"
-  fi
+  [ -z "$key" ] && error_exit "Invalid tag format '$original': must contain '=' character"
 
   trimmed_key=$(trim_whitespace "$key")
-  if [ -z "$trimmed_key" ]; then
-    error_exit "Invalid tag format '$original': key cannot be empty"
-  fi
+  [ -z "$trimmed_key" ] &&  error_exit "Invalid tag format '$original': key cannot be empty"
+
+  case "$trimmed_key" in
+  *[\$\`\\\"\']*)
+    error_exit "Invalid tag format '$original': key contains unsafe characters"
+    ;;
+  esac
 
   trimmed_value=$(trim_whitespace "$value")
-  if [ -z "$trimmed_value" ]; then
-    error_exit "Invalid tag format '$original': value cannot be empty"
-  fi
+  [ -z "$trimmed_value" ] && error_exit "Invalid tag format '$original': value cannot be empty"
+  case "$trimmed_value" in
+  *[\$\`\\\"\']*)
+    error_exit "Invalid tag format '$original': value contains unsafe characters"
+    ;;
+  esac
 
   PARSED_KEY="$trimmed_key"
   PARSED_VALUE="$trimmed_value"
@@ -141,10 +145,8 @@ accumulate_tags() {
     TAG_KEYS="$key"
     TAG_VALUES="$value"
   else
-    TAG_KEYS="$TAG_KEYS
-$key"
-    TAG_VALUES="$TAG_VALUES
-$value"
+    TAG_KEYS="$TAG_KEYS $key"
+    TAG_VALUES="$TAG_VALUES $value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -177,21 +179,19 @@ parse_options() {
 }
 
 validate_endpoint_type() {
-  if [ -n "$ENDPOINT_TYPE" ]; then
-    case "$ENDPOINT_TYPE" in
-    reader | writer) ;;
-    *) error_exit "Endpoint type must be: reader or writer" ;;
-    esac
-  fi
+  [ -n "$ENDPOINT_TYPE" ] || return 0
+  case "$ENDPOINT_TYPE" in
+  reader | writer) ;;
+  *) error_exit "Endpoint type must be: reader or writer" ;;
+  esac
 }
 
 validate_auth_type() {
-  if [ -n "$AUTH_TYPE" ]; then
-    case "$AUTH_TYPE" in
-    iam | secret | manual) ;;
-    *) error_exit "Authentication type must be: iam, secret, or manual" ;;
-    esac
-  fi
+  [ -n "$AUTH_TYPE" ] || return 0
+  case "$AUTH_TYPE" in
+  iam | secret | manual) ;;
+  *) error_exit "Authentication type must be: iam, secret, or manual" ;;
+  esac
 }
 
 validate_ssl_mode() {
@@ -201,10 +201,29 @@ validate_ssl_mode() {
   esac
 }
 
+validate_region() {
+  case "$AWS_REGION" in
+  *[\$\`\\\"\'\;]*)
+    error_exit "Region contains unsafe characters"
+    ;;
+  esac
+}
+
+validate_profile() {
+  [ -n "$AWS_PROFILE" ] || return 0
+  case "$AWS_PROFILE" in
+  *[\$\`\\\"\'\;]*)
+    error_exit "Profile contains unsafe characters"
+    ;;
+  esac
+}
+
 validate_parameters() {
   validate_endpoint_type
   validate_auth_type
   validate_ssl_mode
+  validate_region
+  validate_profile
 }
 
 check_dependencies() {
@@ -256,7 +275,6 @@ filter_by_tags() {
 
   tag_filter=$(build_rds_tag_filter)
   resource_data=$(printf "%s" "$json_data" | jq ".$resource_type")
-
   printf "%s" "$resource_data" | jq "$tag_filter"
 }
 
@@ -278,9 +296,7 @@ get_cluster_endpoints() {
 
     if [ -z "$endpoint_type" ]; then
       printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$writer_endpoint" "aurora"
-      if [ -n "$reader_endpoint" ]; then
-        printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$reader_endpoint" "aurora"
-      fi
+      [ -n "$reader_endpoint" ] && printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$reader_endpoint" "aurora"
     elif [ "$endpoint_type" = "writer" ]; then
       printf "%s\t%s\t%s\t%s\n" "$cluster_id" "$engine" "$writer_endpoint" "aurora"
     elif [ "$endpoint_type" = "reader" ] && [ -n "$reader_endpoint" ]; then
@@ -291,15 +307,20 @@ get_cluster_endpoints() {
 
 create_temp_file() {
   temp_dir="${TMPDIR:-/tmp}"
-  temp_base="$temp_dir/rdsclient.$$"
+  temp_base="rdsclient.$$"
   counter=0
 
-  while [ -e "$temp_base.$counter" ]; do
+  while true; do
+    temp_file="$temp_dir/$temp_base.$counter"
+    (
+      set -C
+      : >"$temp_file"
+    ) 2>/dev/null && break
+
     counter=$((counter + 1))
+    [ "$counter" -gt 1000 ] && error_exit "Failed to create temporary file"
   done
 
-  temp_file="$temp_base.$counter"
-  : >"$temp_file"
   printf "%s" "$temp_file"
 }
 
@@ -401,10 +422,7 @@ read_user_selection() {
 select_database() {
   count=$(count_lines "$DATABASE_LIST")
 
-  if [ "$count" -eq 0 ]; then
-    error_exit "No databases found"
-  fi
-
+  [ "$count" -eq 0 ] && error_exit "No databases found"
   if [ "$count" -eq 1 ]; then
     printf "Connecting to database...\n" >&2
     selection=1
@@ -425,7 +443,12 @@ extract_db_field() {
   resource_type="$2"
   field_path="$3"
 
-  printf "%s" "$details" | jq -r ".${resource_type}[0].${field_path}"
+  value=$(printf "%s" "$details" | jq -r ".${resource_type}[0].${field_path}")
+
+  case "$value" in
+  "" | "null") printf "" ;;
+  *) printf "%s" "$value" ;;
+  esac
 }
 
 get_database_details() {
@@ -445,10 +468,10 @@ get_database_details() {
   IAM_ENABLED=$(extract_db_field "$details" "$resource_type" "IAMDatabaseAuthenticationEnabled")
   SECRET_ARN=$(extract_db_field "$details" "$resource_type" "MasterUserSecret.SecretArn // empty")
 
-  [ -z "$PORT" ] || [ "$PORT" = "null" ] && error_exit "Failed to retrieve database port"
-  [ -z "$DB_NAME" ] || [ "$DB_NAME" = "null" ] && error_exit "Failed to retrieve database name"
+  [ -z "$PORT" ] && error_exit "Failed to retrieve database port"
+  [ -z "$DB_NAME" ] && error_exit "Failed to retrieve database name"
 
-  if [ -z "$MASTER_USER" ] || [ "$MASTER_USER" = "null" ]; then
+  if [ -z "$MASTER_USER" ]; then
     [ -z "$DB_USER" ] && error_exit "Failed to retrieve master username. Specify username with -u"
   fi
 
@@ -467,11 +490,11 @@ determine_client() {
     ;;
   oracle-ee | oracle-ee-cdb | oracle-se2 | oracle-se2-cdb)
     DOCKER_IMAGE="container-registry.oracle.com/database/instantclient:latest"
-    PASSWORD_ENV=""
+    PASSWORD_ENV="ORACLE_PASSWORD"
     ;;
   sqlserver-ee | sqlserver-se | sqlserver-ex | sqlserver-web)
     DOCKER_IMAGE="mcr.microsoft.com/mssql-tools"
-    PASSWORD_ENV=""
+    PASSWORD_ENV="SQLCMDPASSWORD"
     ;;
   *)
     error_exit "Unsupported database engine: $ENGINE"
@@ -489,11 +512,14 @@ authenticate_iam() {
   printf "Generating IAM authentication token...\n" >&2
 
   FINAL_USER="$MASTER_USER"
-  FINAL_PASSWORD=$(AWSENV_TTY=never $AWS_CMD rds generate-db-auth-token \
+  token=$(AWSENV_TTY=never $AWS_CMD rds generate-db-auth-token \
     --hostname "$ENDPOINT" \
     --port "$PORT" \
     --username "$MASTER_USER" \
-    --output text)
+    --output text 2>/dev/null || printf "")
+
+  [ -z "$token" ] && error_exit "Failed to generate IAM authentication token"
+  FINAL_PASSWORD="$token"
 }
 
 authenticate_secret() {
@@ -503,7 +529,9 @@ authenticate_secret() {
   secret_value=$(AWSENV_TTY=never $AWS_CMD secretsmanager get-secret-value \
     --secret-id "$SECRET_ARN" \
     --query SecretString \
-    --output text 2>/dev/null)
+    --output text 2>/dev/null || printf "")
+
+  [ -z "$secret_value" ] && error_exit "Failed to retrieve secret from Secrets Manager"
 
   FINAL_USER=$(printf "%s" "$secret_value" | jq -r '.username // empty')
   FINAL_PASSWORD=$(printf "%s" "$secret_value" | jq -r '.password // empty')
@@ -537,36 +565,31 @@ authenticate() {
 connect_to_postgresql() {
   ssl_mode=""
   [ "$SSL_MODE" = "true" ] && ssl_mode="?sslmode=require"
-  PGPASSWORD="$FINAL_PASSWORD" $docker_cmd psql "postgresql://$FINAL_USER@$ENDPOINT:$PORT/$DB_NAME$ssl_mode"
+  eval "$docker_cmd psql 'postgresql://$FINAL_USER@$ENDPOINT:$PORT/$DB_NAME$ssl_mode'"
 }
 
 connect_to_mysql() {
   ssl_arg=""
   [ "$SSL_MODE" = "true" ] && ssl_arg="--ssl-mode=REQUIRED"
-  MYSQL_PWD="$FINAL_PASSWORD" $docker_cmd mysql -h "$ENDPOINT" -P "$PORT" -u "$FINAL_USER" -D "$DB_NAME" $ssl_arg
+  eval "$docker_cmd mysql -h '$ENDPOINT' -P '$PORT' -u '$FINAL_USER' -D '$DB_NAME' $ssl_arg"
 }
 
 connect_to_oracle() {
-  $docker_cmd sqlplus "$FINAL_USER/$FINAL_PASSWORD@//$ENDPOINT:$PORT/$DB_NAME"
+  eval "$docker_cmd sqlplus '$FINAL_USER/\$ORACLE_PASSWORD@//$ENDPOINT:$PORT/$DB_NAME'"
 }
 
 connect_to_sqlserver() {
   encrypt_arg=""
   [ "$SSL_MODE" = "true" ] && encrypt_arg="-N"
-  $docker_cmd sqlcmd -S "$ENDPOINT,$PORT" -U "$FINAL_USER" -P "$FINAL_PASSWORD" -d "$DB_NAME" $encrypt_arg
+  eval "$docker_cmd sqlcmd -S '$ENDPOINT,$PORT' -U '$FINAL_USER' -d '$DB_NAME' $encrypt_arg"
 }
 
 connect_database() {
   printf "Connecting to %s as %s...\n" "$DB_IDENTIFIER" "$FINAL_USER" >&2
 
-  CONTAINER_NAME="dbclient-$(date +%s)-$$"
-  trap cleanup EXIT INT TERM
+  CONTAINER_NAME="dbclient-$$-$(date +%s%N 2>/dev/null || date +%s)"
 
-  docker_cmd="docker run --rm -it --name $CONTAINER_NAME"
-  if [ -n "$PASSWORD_ENV" ]; then
-    docker_cmd="$docker_cmd -e $PASSWORD_ENV"
-  fi
-  docker_cmd="$docker_cmd $DOCKER_IMAGE"
+  docker_cmd="docker run --rm -it --name '$CONTAINER_NAME' -e $PASSWORD_ENV='$FINAL_PASSWORD' '$DOCKER_IMAGE'"
 
   case "$ENGINE" in
   postgres | aurora-postgresql) connect_to_postgresql ;;
@@ -577,6 +600,7 @@ connect_database() {
 }
 
 main() {
+  trap cleanup EXIT INT TERM HUP
   parse_options "$@"
   validate_parameters
   check_dependencies
