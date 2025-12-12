@@ -95,19 +95,19 @@ validate_tag_format() {
   key="$2"
   value="$3"
 
-  if [ -z "$key" ]; then
-    error_exit "Invalid tag format '$original': must contain '=' character"
-  fi
+  [ -z "$key" ] && error_exit "Invalid tag format '$original': must contain '=' character"
 
   trimmed_key=$(trim_whitespace "$key")
-  if [ -z "$trimmed_key" ]; then
-    error_exit "Invalid tag format '$original': key cannot be empty"
-  fi
+  [ -z "$trimmed_key" ] && error_exit "Invalid tag format '$original': key cannot be empty"
+  case "$trimmed_key" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': key contains unsafe characters" ;;
+  esac
 
   trimmed_value=$(trim_whitespace "$value")
-  if [ -z "$trimmed_value" ]; then
-    error_exit "Invalid tag format '$original': value cannot be empty"
-  fi
+  [ -z "$trimmed_value" ] && error_exit "Invalid tag format '$original': value cannot be empty"
+  case "$trimmed_value" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': value contains unsafe characters" ;;
+  esac
 
   PARSED_KEY="$trimmed_key"
   PARSED_VALUE="$trimmed_value"
@@ -121,10 +121,8 @@ accumulate_tags() {
     TAG_KEYS="$key"
     TAG_VALUES="$value"
   else
-    TAG_KEYS="$TAG_KEYS
-$key"
-    TAG_VALUES="$TAG_VALUES
-$value"
+    TAG_KEYS="$TAG_KEYS $key"
+    TAG_VALUES="$TAG_VALUES $value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -165,14 +163,33 @@ validate_connect_method() {
 }
 
 validate_ssh_key_file() {
-  if [ -n "$SSH_KEY_FILE" ] && [ ! -f "$SSH_KEY_FILE" ]; then
-    error_exit "SSH private key file not found: $SSH_KEY_FILE"
-  fi
+  [ -n "$SSH_KEY_FILE" ] || return 0
+  [ -f "$SSH_KEY_FILE" ] || error_exit "SSH private key file not found: $SSH_KEY_FILE"
+  case "$SSH_KEY_FILE" in
+  *[\$\`\\\"\'\ ]*) error_exit "SSH key file path contains unsafe characters" ;;
+  esac
+}
+
+validate_region() {
+  case "$REGION" in
+  *[\$\`\\\"\'\;]*) error_exit "Region contains unsafe characters" ;;
+  esac
+}
+
+validate_profile() {
+  [ -n "$AWS_PROFILE" ] || return 0
+  case "$AWS_PROFILE" in
+  *[\$\`\\\"\'\;]*)
+    error_exit "Profile contains unsafe characters"
+    ;;
+  esac
 }
 
 validate_parameters() {
   validate_connect_method
   validate_ssh_key_file
+  validate_region
+  validate_profile
 }
 
 check_dependencies() {
@@ -187,6 +204,8 @@ check_dependencies() {
   if [ "$CONNECT_METHOD" = "ssh" ]; then
     command -v ssh >/dev/null 2>&1 || error_exit "'ssh' is required but not found"
   fi
+
+  return 0
 }
 
 build_aws_command() {
@@ -227,9 +246,7 @@ build_ec2_tag_filters() {
   filters=""
   i=1
   while [ "$i" -le "$TAG_COUNT" ]; do
-    if [ -n "$filters" ]; then
-      filters="$filters "
-    fi
+    [ -n "$filters" ] && filters="$filters "
     filters="$filters$(build_tag_filter "$i")"
     i=$((i + 1))
   done
@@ -240,7 +257,6 @@ build_ec2_tag_filters() {
 query_instances() {
   base_filter="Name=instance-state-name,Values=running"
   tag_filters=$(build_ec2_tag_filters)
-
   if [ -n "$tag_filters" ]; then
     filters="$tag_filters $base_filter"
   else
@@ -299,6 +315,7 @@ display_instances() {
       i=$((i + 1))
     fi
   done
+
   printf "\n" >&2
 }
 
@@ -336,9 +353,7 @@ select_instance() {
   instance_ids=$(parse_instance_list "$instance_list")
   count=$(count_instances "$instance_ids")
 
-  if [ "$count" -eq 0 ]; then
-    error_exit "No instances found"
-  fi
+  [ "$count" -eq 0 ] && error_exit "No instances found"
 
   if [ "$count" -eq 1 ]; then
     printf "Connecting to instance...\n" >&2
@@ -353,19 +368,21 @@ select_instance() {
 
 get_instance_ip() {
   instance_id="$1"
-  AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
+  ip=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
     --instance-ids "$instance_id" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
-    --output text 2>/dev/null || printf ""
+    --output text 2>/dev/null || printf "")
+
+  case "$ip" in
+  "" | "None" | "null") printf "" ;;
+  *) printf "%s" "$ip" ;;
+  esac
 }
 
 build_ssh_command() {
   ssh_cmd="ssh -A"
-  if [ -n "$SSH_KEY_FILE" ]; then
-    ssh_cmd="$ssh_cmd -i $SSH_KEY_FILE"
-  fi
-
-  ssh_cmd="$ssh_cmd $SSH_USER@$1"
+  [ -n "$SSH_KEY_FILE" ] && ssh_cmd="$ssh_cmd -i '$SSH_KEY_FILE'"
+  ssh_cmd="$ssh_cmd '$SSH_USER@$1'"
   printf "%s" "$ssh_cmd"
 }
 
@@ -373,17 +390,15 @@ connect_ssh() {
   printf "Connecting to %s via SSH...\n" "$SELECTED_ID" >&2
 
   ip_address=$(get_instance_ip "$SELECTED_ID")
-  if [ -z "$ip_address" ] || [ "$ip_address" = "None" ]; then
-    error_exit "Instance does not have a public IP address for SSH connection"
-  fi
+  [ -z "$ip_address" ] && error_exit "Instance does not have a public IP address for SSH connection"
 
   ssh_cmd=$(build_ssh_command "$ip_address")
   printf "%s\n" "$ssh_cmd" >&2
-  exec $ssh_cmd
+  eval "exec $ssh_cmd"
 }
 
 build_ssm_parameters() {
-  printf '{"command":["%s"]}' "$SSM_COMMAND" | jq -c .
+  jq -nc --arg cmd "$SSM_COMMAND" '{"command":[$cmd]}'
 }
 
 connect_ssm() {
