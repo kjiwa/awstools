@@ -6,6 +6,7 @@ Run commands and scripts in Docker with AWS CLI and session-manager-plugin pre-i
 
 - No local AWS CLI installation required
 - Automatic AWS credentials handling (files and environment variables)
+- AWS SSO authentication support
 - Full terminal support (paging, colors, interactive sessions)
 - Package caching via Docker image layers
 - Custom package installation
@@ -24,12 +25,14 @@ Options:
   -h                Help
 
 Environment Variables:
-  AWSENV_TTY        Control TTY allocation (always|never|auto, default: auto)
+  AWSENV_TTY            Control TTY allocation (always|never|auto, default: auto)
+  AWSENV_AWS_DIR_MODE   Control AWS directory mount (ro|rw|auto, default: auto)
 
 Examples:
   awsenv.sh aws s3 ls
   awsenv.sh -p vim ./my-script.sh
   awsenv.sh -m $(pwd)/logs:/logs:ro -m /data:/data:rw ./process.sh
+  awsenv.sh aws configure sso
   AWSENV_TTY=never awsenv.sh aws ec2 describe-instances
 ```
 
@@ -44,7 +47,7 @@ See [main README](README.md#install-awsenv-as-aws-cli) for wrapper script instal
 - No packages: `awsenv-cli:base`
 - With packages: `awsenv-cli:<hash>` (12-char hash of sorted package list)
 
-**AWS Credentials**: Mounts `$HOME/.aws` read-only to `/root/.aws` and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.).
+**AWS Credentials**: Mounts `$HOME/.aws` to `/root/.aws` with automatic read-only/read-write mode detection and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.). Configuration and SSO commands automatically receive write access for credential caching.
 
 **Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
 
@@ -72,6 +75,19 @@ Override automatic detection with `AWSENV_TTY` environment variable (always|neve
 ./awsenv.sh aws ec2 describe-instances
 ./awsenv.sh aws s3 sync s3://bucket ./local
 ./awsenv.sh aws ssm start-session --target i-1234567890abcdef0
+```
+
+### AWS SSO Authentication
+
+```bash
+# Interactive browser-based authentication
+./awsenv.sh aws configure sso
+
+# Device code authentication (for environments with restricted browser access)
+./awsenv.sh aws configure sso --use-device-code
+
+# Re-authenticate existing SSO profile
+./awsenv.sh aws sso login --profile my-sso-profile
 ```
 
 ### Local Scripts
