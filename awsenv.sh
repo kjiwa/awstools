@@ -49,7 +49,9 @@ Optional:
   -h                Show this help message
 
 Environment Variables:
-  AWSENV_TTY        Control TTY allocation (always|never|auto, default: auto)
+  AWSENV_TTY            Control TTY allocation (always|never|auto, default: auto)
+  AWSENV_AWS_DIR_MODE   Control AWS directory mount (ro|rw|auto, default: auto)
+                        'auto' uses read-write for configure/sso commands
 
 Examples:
   $0 aws s3 ls
@@ -57,6 +59,9 @@ Examples:
   $0 -f packages.txt ./rdsclient.sh -t Environment -v prod
   $0 -m \$(pwd)/logs:/logs:ro -m /data:/mnt/data:rw ./process.sh
   AWSENV_TTY=never $0 aws ec2 describe-instances
+  $0 aws configure sso
+  $0 aws configure sso --use-device-code
+  AWSENV_AWS_DIR_MODE=rw $0 aws s3 ls
 EOF
   exit 1
 }
@@ -138,9 +143,18 @@ validate_mounts() {
   done
 }
 
+validate_aws_dir_mode() {
+  mode="${AWSENV_AWS_DIR_MODE:-auto}"
+  case "$mode" in
+  auto | ro | rw) ;;
+  *) error_exit "Invalid AWSENV_AWS_DIR_MODE '$mode'. Expected 'auto', 'ro', or 'rw'" ;;
+  esac
+}
+
 validate_parameters() {
   validate_command_name "$CMD"
   validate_mounts
+  validate_aws_dir_mode
 }
 
 # ==============================================================================
@@ -374,11 +388,134 @@ resolve_command_location() {
 }
 
 # ==============================================================================
+# AWS Command Detection
+# ==============================================================================
+
+get_first_arg() {
+  shift $((CMD_ARGS_START - 1))
+  printf "%s" "${1:-}"
+}
+
+get_second_arg() {
+  shift $((CMD_ARGS_START - 1))
+  shift 1
+  printf "%s" "${1:-}"
+}
+
+has_device_code_flag() {
+  shift $((CMD_ARGS_START - 1))
+  for arg in "$@"; do
+    case "$arg" in
+    --use-device-code) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+uses_sso_profile() {
+  [ "$CMD" != "aws" ] && return 1
+  [ ! -d "$HOME/.aws" ] && return 1
+
+  profile=""
+
+  shift $((CMD_ARGS_START - 1))
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --profile)
+      shift
+      profile="$1"
+      break
+      ;;
+    --profile=*)
+      profile="${1#--profile=}"
+      break
+      ;;
+    esac
+    shift
+  done
+
+  [ -z "$profile" ] && profile="${AWS_PROFILE:-default}"
+
+  config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+  [ ! -f "$config_file" ] && return 1
+
+  if grep -q "^\[profile $profile\]" "$config_file" 2>/dev/null; then
+    sed -n "/^\[profile $profile\]/,/^\[/p" "$config_file" | grep -q "^sso_" && return 0
+  elif grep -q "^\[$profile\]" "$config_file" 2>/dev/null; then
+    sed -n "/^\[$profile\]/,/^\[/p" "$config_file" | grep -q "^sso_" && return 0
+  fi
+
+  return 1
+}
+
+needs_aws_dir_writable() {
+  [ "$CMD" != "aws" ] && return 1
+
+  first_arg=$(get_first_arg "$@")
+  second_arg=$(get_second_arg "$@")
+
+  case "$first_arg" in
+  configure)
+    case "$second_arg" in
+    "" | set | sso | sso-session) return 0 ;;
+    esac
+    ;;
+  sso)
+    case "$second_arg" in
+    login) return 0 ;;
+    esac
+    ;;
+  esac
+
+  uses_sso_profile "$@" && return 0
+
+  return 1
+}
+
+needs_host_network() {
+  [ "$CMD" != "aws" ] && return 1
+
+  has_device_code_flag "$@" && return 1
+
+  first_arg=$(get_first_arg "$@")
+  second_arg=$(get_second_arg "$@")
+
+  case "$first_arg" in
+  configure)
+    test "$second_arg" = "sso" && return 0
+    ;;
+  sso)
+    test "$second_arg" = "login" && return 0
+    ;;
+  esac
+
+  return 1
+}
+
+# ==============================================================================
 # Docker Environment Configuration
 # ==============================================================================
 
+determine_aws_dir_mode() {
+  mode="${AWSENV_AWS_DIR_MODE:-auto}"
+
+  case "$mode" in
+  ro | rw)
+    printf "%s" "$mode"
+    return 0
+    ;;
+  esac
+
+  if needs_aws_dir_writable "$@"; then
+    printf "rw"
+  else
+    printf "ro"
+  fi
+}
+
 add_aws_credentials_mount() {
-  [ -d "$HOME/.aws" ] && printf " -v %s:/root/.aws:ro" "$HOME/.aws"
+  mount_mode="$1"
+  [ -d "$HOME/.aws" ] && printf " -v %s:/root/.aws:%s" "$HOME/.aws" "$mount_mode"
   return 0
 }
 
@@ -399,7 +536,7 @@ should_allocate_tty() {
   case "${AWSENV_TTY:-auto}" in
   always) return 0 ;;
   never) return 1 ;;
-  *) [ -t 0 ] ;; # Check if standard input is a terminal
+  *) [ -t 0 ] ;;
   esac
 
   return 0
@@ -471,6 +608,16 @@ add_working_directory() {
   printf " -w %s" "$(pwd)"
 }
 
+add_sso_ports() {
+  needs_sso_ports "$@" && printf " -p 127.0.0.1:32768-60999:32768-60999"
+  return 0
+}
+
+add_network_mode() {
+  needs_host_network "$@" && printf " --network host"
+  return 0
+}
+
 determine_docker_tty_flags() {
   if should_allocate_tty; then
     printf "%s" "-it"
@@ -480,9 +627,12 @@ determine_docker_tty_flags() {
 }
 
 build_docker_arguments() {
+  aws_dir_mode=$(determine_aws_dir_mode "$@")
+
   tty_flags=$(determine_docker_tty_flags)
   DOCKER_ARGS="$tty_flags --rm --entrypoint="
-  DOCKER_ARGS="$DOCKER_ARGS$(add_aws_credentials_mount)"
+  DOCKER_ARGS="$DOCKER_ARGS$(add_network_mode "$@")"
+  DOCKER_ARGS="$DOCKER_ARGS$(add_aws_credentials_mount "$aws_dir_mode")"
   DOCKER_ARGS="$DOCKER_ARGS$(add_aws_environment_variables)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_terminal_environment)"
   DOCKER_ARGS="$DOCKER_ARGS$(add_user_mounts)"
@@ -508,7 +658,7 @@ main() {
   check_dependencies
   determine_image
   resolve_command_location
-  build_docker_arguments
+  build_docker_arguments "$@"
 
   shift $((CMD_ARGS_START - 1))
   # shellcheck disable=SC2086
