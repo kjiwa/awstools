@@ -1,93 +1,137 @@
-# AWS Shell Tools
+# rdsclient
 
-POSIX-compliant shell scripts for AWS resource management. Connect to EC2 instances and RDS databases, run AWS commands in containers, with tag-based filtering and minimal dependencies.
+[![CI](https://github.com/kjiwa/rdsclient/actions/workflows/ci.yml/badge.svg)](https://github.com/kjiwa/rdsclient/actions/workflows/ci.yml)
 
-## Tools
+Connect to any RDS or Aurora database with one command. rdsclient discovers databases by tag, detects how to authenticate (IAM, Secrets Manager, or password prompt), launches the right client for the engine in Docker, and connects over SSL — no stored passwords, no local database clients.
 
-**[awsenv](README-awsenv.md)** - Run AWS CLI and scripts in Docker without local installation. Handles credentials, mounts directories, installs packages on demand.
+![rdsclient demo](demo/demo.gif)
 
-**[ec2client](README-ec2client.md)** - Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, auto-connect when one match found.
+## Why
 
-**[rdsclient](README-rdsclient.md)** - Connect to RDS/Aurora databases with auto-detected authentication (IAM, Secrets Manager, or manual).
+Connecting to a database in AWS usually means looking up the endpoint in the console, checking which authentication it uses, generating an IAM token or fetching a secret by hand, and keeping psql, mysql, sqlplus, or sqlcmd installed locally. rdsclient collapses all of that into:
 
-## Common Features
+```
+$ rdsclient -t Environment=production
+Searching for databases with 1 tag filter...
 
-- Multiple tag-based filtering (AND logic)
-- Interactive selection when multiple matches
-- Auto-connect with single match
-- POSIX-compliant (sh, dash, bash, zsh)
-- Docker-based isolation
+1. [Cluster] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-abc.us-east-2.rds.amazonaws.com
+2. [Cluster] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-ro-abc.us-east-2.rds.amazonaws.com
+3. [RDS] reports-db (postgres): reports-db.ghi789.us-east-2.rds.amazonaws.com
 
-## Examples
+Select database (1-3): 1
+Auto-detecting authentication method...
+Connecting to analytics-cluster as admin...
+```
+
+With a single match it connects immediately — no prompt.
+
+## Features
+
+- Tag-based discovery with AND logic (`-t Environment=prod -t Application=api`)
+- Authentication auto-detection: IAM → Secrets Manager → interactive password prompt
+- Standalone RDS instances, Aurora clusters (reader/writer endpoints), and Multi-AZ DB clusters
+- Database clients run in Docker — nothing to install locally
+- SSL/TLS on by default
+- Passwords are never stored, logged, or exposed in process argv
+- Single POSIX shell script (sh, dash, bash, zsh) with no dependencies beyond the AWS CLI and Docker
+
+## Supported Databases
+
+| Engine | Client | Auth Support |
+|--------|--------|--------------|
+| PostgreSQL / Aurora PostgreSQL (standalone, Aurora, or Multi-AZ cluster) | psql | IAM, Secret, Manual |
+| MySQL / Aurora MySQL / MariaDB (standalone, Aurora, or Multi-AZ cluster) | mysql | IAM, Secret, Manual |
+| Oracle (EE, SE2, CDB variants) | sqlplus | Manual password entry only — see [README-rdsclient.md](README-rdsclient.md) |
+| SQL Server (EE, SE, EX, Web) | sqlcmd | IAM, Secret, Manual |
+
+`describe-db-clusters` also returns DocumentDB and Neptune clusters, which use unrelated client tooling; rdsclient filters those out.
+
+## Quick Start
+
+Prerequisites: Docker, the AWS CLI, and AWS credentials with `rds:DescribeDBInstances` / `rds:DescribeDBClusters` (plus `rds-db:connect` for IAM auth or `secretsmanager:GetSecretValue` for Secrets Manager auth).
+
+Don't have the AWS CLI installed? Install the bundled [awsenv](README-awsenv.md) wrapper scripts and Docker becomes the *only* prerequisite — see [Also Included](#also-included).
 
 ```bash
-# Connect to EC2 via SSM
-ec2client -t Environment=production
+git clone https://github.com/kjiwa/rdsclient.git
+cd rdsclient
 
-# Multiple tag filters (AND logic)
-ec2client -t Environment=prod -t Team=backend
+# Run directly
+./rdsclient.sh -t Environment=staging
 
-# Connect to RDS with IAM
-rdsclient -t Application=api -a iam
+# Or install system-wide (also installs awsenv, ec2client, and AWS CLI wrappers)
+sudo ./install.sh -d /usr/local/bin -c bash
 
-# Multiple database filters
-rdsclient -t Environment=prod -t Application=analytics
-
-# Run AWS commands in container
-awsenv aws s3 ls
-awsenv -p jq ./process-data.sh
+# Or per-user, no sudo
+./install.sh -d ~/.local/bin -c bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Usage
 
-### Prerequisites
+```
+rdsclient [OPTIONS]
 
-- **Docker**
-- **AWS credentials**
-  - AWS CLI configuration files (`~/.aws/config`, `~/.aws/credentials`)
-  - Or environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+Options:
+  -t TAG=VALUE      Tag filter (repeatable, AND logic)
+  -e ENDPOINT_TYPE  Aurora/cluster endpoint: reader or writer
+  -a AUTH_TYPE      Authentication: iam, secret, or manual
+  -u DB_USER        Database user (sets auth to manual unless -a is also given)
+  -s SSL_MODE       Use SSL: true or false (default: true)
+  -h                Show help
 
-### Run Without Installation
-
-The scripts work directly without installation:
-
-```bash
-chmod +x *.sh
-./ec2client.sh -t Environment=staging
-./rdsclient.sh -t Team=backend -a iam
-./awsenv.sh aws ec2 describe-instances
+Examples:
+  rdsclient
+  rdsclient -t Environment=prod
+  rdsclient -t Environment=prod -t Application=api -a iam
+  rdsclient -t Environment=staging -e writer
+  rdsclient -u myuser -a manual
 ```
 
-### Install for System-Wide Access
+Profile and region come entirely from the AWS CLI's own resolution (`AWS_PROFILE`, `AWS_REGION`/`AWS_DEFAULT_REGION`, `~/.aws/config`). Select a profile with `export AWS_PROFILE=...` before running.
 
-Installation makes the tools available system-wide and provides AWS CLI wrapper functionality.
+### Authentication Methods
 
-#### Quick Install
+- **Auto-detect (default)** — priority: IAM → Secrets Manager → manual prompt.
+- **IAM** (`-a iam`) — generates a temporary 15-minute token; requires IAM database authentication enabled on the database and `rds-db:connect` permission. No stored credentials.
+- **Secrets Manager** (`-a secret`) — retrieves credentials from AWS Secrets Manager (used automatically when the database has a `MasterUserSecret`); supports rotation.
+- **Manual** (`-a manual`) — interactive password prompt; the password is not stored or logged.
+
+Full details — `-u` semantics, per-engine `DatabaseName` defaults, Oracle password handling, tag syntax edge cases — are in [README-rdsclient.md](README-rdsclient.md).
+
+## How It Compares
+
+Claims below were verified against each project's documentation; these are good tools solving adjacent problems.
+
+- **[basti](https://github.com/basti-app/basti)** solves the *network path*: it provisions a bastion EC2 instance and uses SSM port forwarding to expose a database in a private VPC on your localhost. You still bring your own client and credentials. rdsclient solves *discovery, authentication, and the client* — and assumes the endpoint is reachable (VPN, public endpoint, or a tunnel such as one basti opened). The two compose naturally.
+- **Hand-rolled `aws rds generate-db-auth-token` pipelines** (the approach in the [AWS docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.AWSCLI.html)) work, but you re-write them per engine and per auth method, and they leave endpoints and usernames hard-coded in scripts. rdsclient is that pipeline, generalized: tag discovery, engine detection, auth detection, and SSL defaults in one audited script.
+- **GUI clients with IAM support** (DBeaver, DataGrip, pgAdmin) handle one connection at a time after manual setup per database. rdsclient needs no per-database configuration — if the tags match, it connects.
+
+## Also Included
+
+Two companion tools live in this repo, sharing the same design: single POSIX script, tag-based UX, stub-tested.
+
+- **[awsenv](README-awsenv.md)** — run the AWS CLI (and your own scripts) in Docker with credentials, SSO, TTY handling, and package installation managed for you. Installing its wrapper scripts (`aws`, `aws_completer`, `session-manager-plugin`) makes Docker the only thing rdsclient needs on the host.
+- **[ec2client](README-ec2client.md)** — connect to EC2 instances via SSM or SSH with the same `-t Tag=Value` filtering and interactive picker as rdsclient.
+
+## Installation Details
+
+The install script copies all three tools to the target directory without the `.sh` extension, creates AWS CLI wrapper scripts (`aws`, `aws_completer`, `session-manager-plugin`) backed by awsenv, and optionally configures bash or zsh completion.
 
 ```bash
-# System-wide installation (requires sudo)
-sudo ./install.sh -d /usr/local/bin -c bash
-
-# User installation (no sudo required)
-./install.sh -d ~/.local/bin -c bash
-export PATH="$HOME/.local/bin:$PATH"  # Add to ~/.bashrc
+sudo ./install.sh -d /usr/local/bin -c bash   # system-wide
+./install.sh -d ~/.local/bin -c zsh           # per-user
 ```
 
-The install script:
-- Copies tools to target directory without `.sh` extension
-- Creates AWS CLI wrapper scripts (aws, aws_completer, session-manager-plugin)
-- Optionally configures shell completion for bash or zsh
-
-#### Manual Installation
+Manual installation, if you'd rather not run the script:
 
 ```bash
-# Copy scripts
-sudo cp awsenv.sh /usr/local/bin/awsenv
-sudo cp ec2client.sh /usr/local/bin/ec2client
 sudo cp rdsclient.sh /usr/local/bin/rdsclient
-sudo chmod +x /usr/local/bin/{awsenv,ec2client,rdsclient}
+sudo cp ec2client.sh /usr/local/bin/ec2client
+sudo cp awsenv.sh /usr/local/bin/awsenv
+sudo chmod +x /usr/local/bin/{rdsclient,ec2client,awsenv}
 
-# Create AWS CLI wrappers
+# AWS CLI wrappers backed by awsenv
 for cmd in aws aws_completer session-manager-plugin; do
   sudo tee /usr/local/bin/$cmd > /dev/null << 'EOF'
 #!/bin/sh
@@ -97,37 +141,30 @@ EOF
 done
 ```
 
-#### Shell Completion
+Shell completion (bash: `complete -C aws_completer aws` in `~/.bashrc`; zsh needs `bashcompinit` loaded first — see [README-awsenv.md](README-awsenv.md)).
 
-**Bash** (`~/.bashrc`):
-```bash
-complete -C aws_completer aws
-```
-
-**Zsh** (`~/.zshrc`):
-```zsh
-autoload -Uz compinit && compinit
-autoload -Uz +X bashcompinit && bashcompinit
-complete -C aws_completer aws
-```
-
-`complete -C` is a bash builtin; zsh needs `bashcompinit` loaded first.
-
-## Uninstall
+To uninstall:
 
 ```bash
-# Remove installed files
 sudo rm -f /usr/local/bin/{awsenv,ec2client,rdsclient,aws,aws_completer,session-manager-plugin}
-
-# Remove completion (edit ~/.bashrc or ~/.zshrc manually)
 ```
+
+**Note**: rdsclient cannot run *inside* an awsenv container (`awsenv rdsclient ...`) — it launches Docker containers itself, which would require Docker-in-Docker. Use the installed wrapper scripts instead; rdsclient then runs on the host and calls `aws` through the wrapper.
 
 ## Testing
 
-The repo has a fixture-based test suite in `tests/` with stub `aws`/`docker`/`ssh`/`session-manager-plugin` commands, so it never touches real AWS accounts or Docker. Run the whole suite (shellcheck, the shared-code drift check, and the unit/end-to-end tests) with:
+A fixture-based test suite in [tests/](tests/) stubs `aws`, `docker`, `ssh`, and `session-manager-plugin`, so it never touches real AWS accounts or Docker. It includes shellcheck and a shared-code drift check:
 
 ```bash
 ./tests/run.sh
 ```
 
-It's runnable from any working directory and exits non-zero if anything fails.
+The demo GIF above is generated from the same stub harness — see [demo/](demo/).
+
+## Support & Maintenance
+
+Maintained on a best-effort basis. Issues and PRs are welcome; responses are not guaranteed. Bug reports that follow the issue template (exact command, OS, Docker version, sanitized output) are far more likely to be acted on. CI (shellcheck, shfmt, and the full stub suite) must pass before anything merges.
+
+## License
+
+[MIT](LICENSE)

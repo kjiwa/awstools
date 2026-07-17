@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Demo stand-in for `docker`: instead of launching the real psql container,
+# plays a short canned psql session so demo.gif can be recorded without a
+# Docker daemon or database. Only `select 1;` and `\q` get responses.
+
+printf 'psql (16.4)\n'
+printf 'SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384)\n'
+printf 'Type "help" for help.\n\n'
+
+while printf 'analytics=> ' && IFS= read -r line; do
+  case "$line" in
+  '\q') exit 0 ;;
+  'select 1;')
+    printf ' ?column?\n'
+    printf '%s\n' '----------'
+    printf '        1\n'
+    printf '(1 row)\n\n'
+    ;;
+  '') ;;
+  *) printf 'demo: try "select 1;" or \\q\n' ;;
+  esac
+done
