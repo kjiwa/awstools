@@ -21,12 +21,13 @@ awsenv.sh [OPTIONS] <command> [args...]
 Options:
   -p PACKAGE        Additional package (repeatable)
   -f FILE           File with packages (one per line)
-  -m MOUNT          Mount as <local>:<docker>[:(ro|rw)] (repeatable)
+  -m MOUNT          Mount a directory or file as <local>:<docker>[:(ro|rw)] (repeatable)
   -h                Help
 
 Environment Variables:
   AWSENV_TTY            Control TTY allocation (always|never|auto, default: auto)
   AWSENV_AWS_DIR_MODE   Control AWS directory mount (ro|rw|auto, default: auto)
+  AWSENV_PWD_MODE       Control current directory mount (rw|ro|off, default: rw)
 
 Examples:
   awsenv.sh aws s3 ls
@@ -34,6 +35,7 @@ Examples:
   awsenv.sh -m $(pwd)/logs:/logs:ro -m /data:/data:rw ./process.sh
   awsenv.sh aws configure sso
   AWSENV_TTY=never awsenv.sh aws ec2 describe-instances
+  AWSENV_PWD_MODE=off awsenv.sh aws --version
 ```
 
 ## Installation
@@ -45,9 +47,13 @@ See [main README](README.md#install-awsenv-as-aws-cli) for wrapper script instal
 **Image Caching**: Generates unique Docker images based on package combinations. Images are reused on subsequent runs with matching packages.
 
 - No packages: `awsenv-cli:base`
-- With packages: `awsenv-cli:<hash>` (12-char hash of sorted package list)
+- With packages: `awsenv-cli:<tag>`, where `<tag>` is a `cksum` checksum of the sorted package list (falls back to `sum`, then a byte count, if `cksum` isn't available)
 
-**AWS Credentials**: Mounts `$HOME/.aws` to `/root/.aws` with automatic read-only/read-write mode detection and passes AWS environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, etc.). Configuration and SSO commands automatically receive write access for credential caching.
+**AWS Credentials**: Mounts `$HOME/.aws` to `/root/.aws` with automatic read-only/read-write mode detection, and forwards every environment variable whose name starts with `AWS_` (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_REGION`, `AWS_PROFILE`, `AWS_PAGER`, `AWS_ENDPOINT_URL*`, `AWS_CA_BUNDLE`, `AWS_MAX_ATTEMPTS`, `AWS_RETRY_MODE`, `AWS_ROLE_ARN`, `AWS_WEB_IDENTITY_TOKEN_FILE`, etc.) that is set and non-empty. Configuration and SSO commands automatically receive write access for credential caching.
+
+**Note**: `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CA_BUNDLE`, and `AWS_WEB_IDENTITY_TOKEN_FILE` hold host filesystem paths. Forwarding the variable does not make the file available inside the container — mount the referenced path explicitly with `-m` (e.g. `-m $AWS_WEB_IDENTITY_TOKEN_FILE:$AWS_WEB_IDENTITY_TOKEN_FILE:ro`) if the command needs it.
+
+**Working Directory**: The current directory is mounted into the container at the same path and set as the working directory, so commands can read and write files relative to `$(pwd)` without an explicit `-m`. Controlled by `AWSENV_PWD_MODE` (`rw` by default, or `ro`/`off`).
 
 **Command Resolution**: Built-in commands (`aws`, `aws_completer`, `session-manager-plugin`) use container versions. Other commands are located on host, symlinks resolved (up to 40 levels), and mounted into container.
 
@@ -90,6 +96,12 @@ Override automatic detection with `AWSENV_TTY` environment variable (always|neve
 ./awsenv.sh aws sso login --profile my-sso-profile
 ```
 
+**macOS Docker Desktop note**: `aws configure sso` and `aws sso login` need `--network host` to receive the browser's OAuth callback. On Docker Desktop for macOS, host networking requires enabling the "Enable host networking" feature (Settings → Resources → Network) and is not available on all versions. If host networking isn't available, pass `--use-device-code` instead — it doesn't need a local callback port and works everywhere:
+
+```bash
+./awsenv.sh aws configure sso --use-device-code
+```
+
 ### Local Scripts
 
 ```bash
@@ -121,7 +133,9 @@ Use with:
 ./awsenv.sh -f packages.txt ./deploy.sh
 ```
 
-### Directory Mounting
+### Directory and File Mounting
+
+`-m` accepts either a directory or a single file as `<local_path>`:
 
 ```bash
 # Read-only
@@ -135,7 +149,12 @@ Use with:
 ./awsenv.sh -m $(pwd)/input:/input:ro \
             -m $(pwd)/output:/output:rw \
             ./pipeline.sh
+
+# Mounting a single file (e.g. an SSH key for ec2client -c ssh)
+./awsenv.sh -m ~/.ssh/key.pem:/keys/key.pem:ro ec2client -t Name=bastion -c ssh -k /keys/key.pem
 ```
+
+The current directory is already mounted by default (see **Working Directory** above); `-m` is for mounting *other* paths.
 
 ### Complex Commands
 

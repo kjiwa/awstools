@@ -37,13 +37,16 @@ MOUNT_SEPARATOR="$(printf '\036')"
 # ==============================================================================
 
 usage() {
+  exit_code="${1:-1}"
+
   cat >&2 <<EOF
 Usage: $0 [OPTIONS] <command> [args...]
 
 Optional:
   -p PACKAGE        Additional package to install (can be specified multiple times)
   -f FILE           File containing packages to install (one per line)
-  -m MOUNT          Mount directory as <local_dir>:<docker_dir>[:(ro|rw)]
+  -m MOUNT          Mount path as <local_path>:<docker_dir>[:(ro|rw)]
+                    <local_path> may be a directory or a file
                     Default is read-write (rw) if not specified
                     Can be specified multiple times
   -h                Show this help message
@@ -52,6 +55,7 @@ Environment Variables:
   AWSENV_TTY            Control TTY allocation (always|never|auto, default: auto)
   AWSENV_AWS_DIR_MODE   Control AWS directory mount (ro|rw|auto, default: auto)
                         'auto' uses read-write for configure/sso commands
+  AWSENV_PWD_MODE       Control current directory mount (rw|ro|off, default: rw)
 
 Examples:
   $0 aws s3 ls
@@ -62,8 +66,9 @@ Examples:
   $0 aws configure sso
   $0 aws configure sso --use-device-code
   AWSENV_AWS_DIR_MODE=rw $0 aws s3 ls
+  AWSENV_PWD_MODE=off $0 aws --version
 EOF
-  exit 1
+  exit "$exit_code"
 }
 
 error_exit() {
@@ -110,7 +115,7 @@ validate_mount_format() {
   [ "$count" -lt 2 ] && error_exit "Invalid mount format '$mount'"
   [ "$count" -gt 3 ] && error_exit "Invalid mount format '$mount'"
 
-  local_dir="$1"
+  local_path="$1"
   docker_dir="$2"
 
   if [ "$count" -eq 3 ]; then
@@ -121,8 +126,8 @@ validate_mount_format() {
     esac
   fi
 
-  [ ! -d "$local_dir" ] && error_exit "Mount directory '$local_dir' does not exist"
-  [ ! -r "$local_dir" ] && error_exit "Mount directory '$local_dir' is not readable"
+  [ ! -e "$local_path" ] && error_exit "Mount path '$local_path' does not exist"
+  [ ! -r "$local_path" ] && error_exit "Mount path '$local_path' is not readable"
   validate_docker_path "$docker_dir"
 
   return 0
@@ -151,10 +156,28 @@ validate_aws_dir_mode() {
   esac
 }
 
+validate_pwd_mode() {
+  mode="${AWSENV_PWD_MODE:-rw}"
+  case "$mode" in
+  rw | ro | off) ;;
+  *) error_exit "Invalid AWSENV_PWD_MODE '$mode'. Expected 'rw', 'ro', or 'off'" ;;
+  esac
+}
+
+validate_tty_mode() {
+  mode="${AWSENV_TTY:-auto}"
+  case "$mode" in
+  always | never | auto) ;;
+  *) error_exit "Invalid AWSENV_TTY '$mode'. Expected 'always', 'never', or 'auto'" ;;
+  esac
+}
+
 validate_parameters() {
   validate_command_name "$CMD"
   validate_mounts
   validate_aws_dir_mode
+  validate_pwd_mode
+  validate_tty_mode
 }
 
 # ==============================================================================
@@ -177,6 +200,7 @@ parse_arguments() {
         MOUNTS="$MOUNTS${MOUNT_SEPARATOR}$OPTARG"
       fi
       ;;
+    h) usage 0 ;;
     *) usage ;;
     esac
   done
@@ -272,7 +296,7 @@ build_custom_image() {
 
   echo "Building custom image: $IMAGE" >&2
   [ -n "$sorted_packages" ] && echo "Installing packages: $sorted_packages" >&2
-  create_dockerfile "$sorted_packages" | docker build -t "$IMAGE" -
+  create_dockerfile "$sorted_packages" | docker build -t "$IMAGE" - >&2
 }
 
 determine_image() {
@@ -363,18 +387,9 @@ find_command_path() {
   return 1
 }
 
-create_command_mount() {
-  if [ -z "$CMD_PATH" ] || [ ! -e "$CMD_PATH" ]; then
-    return 0
-  fi
-
-  cmd_dir="$(dirname "$CMD_PATH")"
-  printf "%s %s:%s:ro" "-v" "$cmd_dir" "$cmd_dir"
-}
-
 resolve_command_location() {
   CMD_PATH=""
-  CMD_MOUNT=""
+  CMD_MOUNT_DIR=""
 
   if is_aws_cli_builtin "$CMD"; then
     CMD_PATH="$CMD"
@@ -384,22 +399,47 @@ resolve_command_location() {
   found_path=$(find_command_path) || error_exit "Command '$CMD' does not exist or is not an executable file"
   resolved_path=$(resolve_symlink "$found_path") || error_exit "Failed to resolve symlink for '$found_path'"
   CMD_PATH="$resolved_path"
-  CMD_MOUNT=$(create_command_mount)
+  [ -e "$CMD_PATH" ] && CMD_MOUNT_DIR="$(dirname "$CMD_PATH")"
 }
 
 # ==============================================================================
 # AWS Command Detection
 # ==============================================================================
 
-get_first_arg() {
-  shift $((CMD_ARGS_START - 1))
-  printf "%s" "${1:-}"
-}
+GLOBAL_OPTS_WITH_VALUE=" --profile --region --output --endpoint-url --ca-bundle --cli-read-timeout --cli-connect-timeout --color --query --cli-binary-format "
 
-get_second_arg() {
+get_positional_args() {
   shift $((CMD_ARGS_START - 1))
-  shift 1
-  printf "%s" "${1:-}"
+
+  FIRST_POS=""
+  SECOND_POS=""
+  skip_next=0
+
+  for arg in "$@"; do
+    if [ "$skip_next" -eq 1 ]; then
+      skip_next=0
+      continue
+    fi
+
+    case "$arg" in
+    --*=*) continue ;;
+    --*)
+      case "$GLOBAL_OPTS_WITH_VALUE" in
+      *" $arg "*) skip_next=1 ;;
+      esac
+      continue
+      ;;
+    -*) continue ;;
+    *)
+      if [ -z "$FIRST_POS" ]; then
+        FIRST_POS="$arg"
+      elif [ -z "$SECOND_POS" ]; then
+        SECOND_POS="$arg"
+        break
+      fi
+      ;;
+    esac
+  done
 }
 
 has_device_code_flag() {
@@ -412,7 +452,7 @@ has_device_code_flag() {
   return 1
 }
 
-uses_sso_profile() {
+profile_needs_write_access() {
   [ "$CMD" != "aws" ] && return 1
   [ ! -d "$HOME/.aws" ] && return 1
 
@@ -423,7 +463,7 @@ uses_sso_profile() {
     case "$1" in
     --profile)
       shift
-      profile="$1"
+      profile="${1:-}"
       break
       ;;
     --profile=*)
@@ -440,9 +480,9 @@ uses_sso_profile() {
   [ ! -f "$config_file" ] && return 1
 
   if grep -q "^\[profile $profile\]" "$config_file" 2>/dev/null; then
-    sed -n "/^\[profile $profile\]/,/^\[/p" "$config_file" | grep -q "^sso_" && return 0
+    sed -n "/^\[profile $profile\]/,/^\[/p" "$config_file" | grep -Eq "^(sso_|role_arn)" && return 0
   elif grep -q "^\[$profile\]" "$config_file" 2>/dev/null; then
-    sed -n "/^\[$profile\]/,/^\[/p" "$config_file" | grep -q "^sso_" && return 0
+    sed -n "/^\[$profile\]/,/^\[/p" "$config_file" | grep -Eq "^(sso_|role_arn)" && return 0
   fi
 
   return 1
@@ -451,23 +491,22 @@ uses_sso_profile() {
 needs_aws_dir_writable() {
   [ "$CMD" != "aws" ] && return 1
 
-  first_arg=$(get_first_arg "$@")
-  second_arg=$(get_second_arg "$@")
+  get_positional_args "$@"
 
-  case "$first_arg" in
+  case "$FIRST_POS" in
   configure)
-    case "$second_arg" in
-    "" | set | sso | sso-session) return 0 ;;
+    case "$SECOND_POS" in
+    "" | set | sso | sso-session | import) return 0 ;;
     esac
     ;;
   sso)
-    case "$second_arg" in
-    login) return 0 ;;
+    case "$SECOND_POS" in
+    login | logout) return 0 ;;
     esac
     ;;
   esac
 
-  uses_sso_profile "$@" && return 0
+  profile_needs_write_access "$@" && return 0
 
   return 1
 }
@@ -477,15 +516,14 @@ needs_host_network() {
 
   has_device_code_flag "$@" && return 1
 
-  first_arg=$(get_first_arg "$@")
-  second_arg=$(get_second_arg "$@")
+  get_positional_args "$@"
 
-  case "$first_arg" in
+  case "$FIRST_POS" in
   configure)
-    test "$second_arg" = "sso" && return 0
+    test "$SECOND_POS" = "sso" && return 0
     ;;
   sso)
-    test "$second_arg" = "login" && return 0
+    test "$SECOND_POS" = "login" && return 0
     ;;
   esac
 
@@ -495,6 +533,22 @@ needs_host_network() {
 # ==============================================================================
 # Docker Environment Configuration
 # ==============================================================================
+
+should_allocate_tty() {
+  case "${AWSENV_TTY:-auto}" in
+  always) return 0 ;;
+  never) return 1 ;;
+  *) [ -t 0 ] ;;
+  esac
+}
+
+determine_docker_tty_flags() {
+  if should_allocate_tty; then
+    printf "%s" "-it"
+  else
+    printf "%s" "-i"
+  fi
+}
 
 determine_aws_dir_mode() {
   mode="${AWSENV_AWS_DIR_MODE:-auto}"
@@ -513,131 +567,49 @@ determine_aws_dir_mode() {
   fi
 }
 
-add_aws_credentials_mount() {
+determine_pwd_mode() {
+  printf "%s" "${AWSENV_PWD_MODE:-rw}"
+}
+
+aws_credentials_mount_value() {
   mount_mode="$1"
-  [ -d "$HOME/.aws" ] && printf " -v %s:/root/.aws:%s" "$HOME/.aws" "$mount_mode"
+  [ -d "$HOME/.aws" ] && printf "%s:/root/.aws:%s" "$HOME/.aws" "$mount_mode"
   return 0
 }
 
-add_aws_environment_variables() {
-  aws_vars="AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN \
-    AWS_DEFAULT_REGION AWS_REGION AWS_PROFILE AWS_CONFIG_FILE \
-    AWS_SHARED_CREDENTIALS_FILE"
-  for var in $aws_vars; do
-    is_valid_identifier "$var" || continue
-    value=$(printenv "$var" 2>/dev/null || true)
-    [ -n "$value" ] && printf " -e %s" "$var"
-  done
-
-  return 0
-}
-
-should_allocate_tty() {
-  case "${AWSENV_TTY:-auto}" in
-  always) return 0 ;;
-  never) return 1 ;;
-  *) [ -t 0 ] ;;
-  esac
-
-  return 0
-}
-
-add_terminal_type() {
-  [ -n "${TERM:-}" ] && printf " -e TERM"
-  return 0
-}
-
-add_terminal_dimensions() {
-  [ -n "${COLUMNS:-}" ] && printf " -e COLUMNS"
-  [ -n "${LINES:-}" ] && printf " -e LINES"
-  return 0
-}
-
-add_terminal_display() {
-  [ -n "${COLORTERM:-}" ] && printf " -e COLORTERM"
-  return 0
-}
-
-add_pager_variable() {
-  [ -n "${PAGER:-}" ] && printf " -e PAGER"
-  [ -n "${AWS_PAGER:-}" ] && printf " -e AWS_PAGER"
-  return 0
-}
-
-add_locale_variables() {
-  [ -n "${LANG:-}" ] && printf " -e LANG"
-
-  for var in $(printenv | grep '^LC_' | cut -d= -f1); do
-    is_valid_identifier "$var" || continue
-    printf " -e %s" "$var"
-  done
-
-  return 0
-}
-
-add_terminal_environment() {
-  add_terminal_type
-  add_terminal_dimensions
-  add_terminal_display
-  add_pager_variable
-  add_locale_variables
-}
-
-add_user_mounts() {
-  [ -z "$MOUNTS" ] && return 0
-
-  OLD_IFS="$IFS"
-  IFS="$MOUNT_SEPARATOR"
-
-  # shellcheck disable=SC2086
-  set -- $MOUNTS
-  IFS="$OLD_IFS"
-
-  for mount in "$@"; do
-    [ -n "$mount" ] && printf " -v %s" "$mount"
-  done
-}
-
-add_command_mount() {
-  if [ -n "$CMD_MOUNT" ]; then
-    printf " %s" "$CMD_MOUNT"
+count_mounts() {
+  if [ -z "$MOUNTS" ]; then
+    printf "0"
+    return
   fi
+
+  printf "%s" "$MOUNTS" | tr "$MOUNT_SEPARATOR" '\n' | grep -c .
 }
 
-add_working_directory() {
-  printf " -w %s" "$(pwd)"
+get_mount_at_index() {
+  idx="$1"
+  printf "%s" "$MOUNTS" | tr "$MOUNT_SEPARATOR" '\n' | sed -n "${idx}p"
 }
 
-add_sso_ports() {
-  needs_sso_ports "$@" && printf " -p 127.0.0.1:32768-60999:32768-60999"
-  return 0
-}
+cmd_mount_shadowed_by_pwd() {
+  pwd_mode="$1"
 
-add_network_mode() {
-  needs_host_network "$@" && printf " --network host"
-  return 0
-}
+  [ -z "$CMD_MOUNT_DIR" ] && return 1
+  [ "$pwd_mode" = "off" ] && return 1
 
-determine_docker_tty_flags() {
-  if should_allocate_tty; then
-    printf "%s" "-it"
-  else
-    printf "%s" "-i"
+  # Mounting the command's directory again at the same target docker rejects
+  # as a duplicate mount point regardless of mode.
+  [ "$CMD_MOUNT_DIR" = "$(pwd)" ] && return 0
+
+  # A read-write cwd mount always wins over a nested read-only command mount;
+  # skip the latter so it doesn't collide with (or shadow) the former.
+  if [ "$pwd_mode" = "rw" ]; then
+    case "$CMD_MOUNT_DIR" in
+    "$(pwd)"/*) return 0 ;;
+    esac
   fi
-}
 
-build_docker_arguments() {
-  aws_dir_mode=$(determine_aws_dir_mode "$@")
-
-  tty_flags=$(determine_docker_tty_flags)
-  DOCKER_ARGS="$tty_flags --rm --entrypoint="
-  DOCKER_ARGS="$DOCKER_ARGS$(add_network_mode "$@")"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_aws_credentials_mount "$aws_dir_mode")"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_aws_environment_variables)"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_terminal_environment)"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_user_mounts)"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_command_mount)"
-  DOCKER_ARGS="$DOCKER_ARGS$(add_working_directory)"
+  return 1
 }
 
 # ==============================================================================
@@ -652,17 +624,78 @@ check_dependencies() {
 # Main Entry Point
 # ==============================================================================
 
+run_container() {
+  aws_dir_mode=$(determine_aws_dir_mode "$@")
+  pwd_mode=$(determine_pwd_mode)
+  tty_flags=$(determine_docker_tty_flags)
+
+  host_network=0
+  needs_host_network "$@" && host_network=1
+
+  skip_cmd_mount=0
+  cmd_mount_shadowed_by_pwd "$pwd_mode" && skip_cmd_mount=1
+
+  shift $((CMD_ARGS_START - 1))
+  # "$@" is now the trailing arguments to pass to CMD_PATH inside the
+  # container. Every docker flag below is prepended in front of "$@" via
+  # `set --`; docker does not care about the relative order of its own
+  # flags, only that they precede IMAGE, which precedes CMD_PATH, which
+  # precedes the command's own arguments.
+
+  set -- "$IMAGE" "$CMD_PATH" "$@"
+  set -- -w "$(pwd)" "$@"
+
+  if [ "$pwd_mode" != "off" ]; then
+    set -- -v "$(pwd):$(pwd):$pwd_mode" "$@"
+  fi
+
+  if [ "$skip_cmd_mount" -eq 0 ] && [ -n "$CMD_MOUNT_DIR" ]; then
+    set -- -v "$CMD_MOUNT_DIR:$CMD_MOUNT_DIR:ro" "$@"
+  fi
+
+  mount_count=$(count_mounts)
+  i=1
+  while [ "$i" -le "$mount_count" ]; do
+    mount=$(get_mount_at_index "$i")
+    [ -n "$mount" ] && set -- -v "$mount" "$@"
+    i=$((i + 1))
+  done
+
+  aws_mount=$(aws_credentials_mount_value "$aws_dir_mode")
+  [ -n "$aws_mount" ] && set -- -v "$aws_mount" "$@"
+
+  [ "$host_network" -eq 1 ] && set -- --network host "$@"
+
+  for var in $(printenv | grep '^AWS_' | cut -d= -f1); do
+    is_valid_identifier "$var" || continue
+    value=$(printenv "$var" 2>/dev/null || true)
+    [ -n "$value" ] && set -- -e "$var" "$@"
+  done
+
+  [ -n "${TERM:-}" ] && set -- -e TERM "$@"
+  [ -n "${COLUMNS:-}" ] && set -- -e COLUMNS "$@"
+  [ -n "${LINES:-}" ] && set -- -e LINES "$@"
+  [ -n "${COLORTERM:-}" ] && set -- -e COLORTERM "$@"
+  [ -n "${PAGER:-}" ] && set -- -e PAGER "$@"
+  [ -n "${LANG:-}" ] && set -- -e LANG "$@"
+
+  for var in $(printenv | grep '^LC_' | cut -d= -f1); do
+    is_valid_identifier "$var" || continue
+    set -- -e "$var" "$@"
+  done
+
+  set -- "$tty_flags" --rm --entrypoint= "$@"
+
+  exec docker run "$@"
+}
+
 main() {
   parse_arguments "$@"
   validate_parameters
   check_dependencies
   determine_image
   resolve_command_location
-  build_docker_arguments "$@"
-
-  shift $((CMD_ARGS_START - 1))
-  # shellcheck disable=SC2086
-  exec docker run $DOCKER_ARGS "$IMAGE" "$CMD_PATH" "$@"
+  run_container "$@"
 }
 
 main "$@"
