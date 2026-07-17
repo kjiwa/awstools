@@ -2,6 +2,8 @@
 
 Run commands and scripts in Docker with AWS CLI and session-manager-plugin pre-installed. Handles credentials, mounts directories, installs packages as needed.
 
+awsenv is the companion that makes Docker the only prerequisite for [rdsclient](README.md): install its wrapper scripts (`aws`, `aws_completer`, `session-manager-plugin`) and rdsclient, ec2client, and your own scripts get a working AWS CLI without anything else on the host. It's equally useful standalone as a dockerized AWS CLI that goes beyond the usual `amazon/aws-cli` alias — cached package layers, TTY and pager handling, `AWS_*` env forwarding, SSO support, and working-directory mounting.
+
 ## Features
 
 - No local AWS CLI installation required

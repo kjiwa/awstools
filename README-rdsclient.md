@@ -1,6 +1,10 @@
-# rdsclient
+# rdsclient (full reference)
 
 Connect to RDS and Aurora databases with automatic authentication detection. Supports IAM, Secrets Manager, and manual authentication.
+
+This is the complete reference; for the overview, quick start, and comparisons with related tools, see the [main README](README.md).
+
+**Related tools**: [basti](https://github.com/basti-app/basti) solves the complementary problem — network access to databases in private VPC subnets via an auto-managed bastion and SSM port forwarding. rdsclient assumes the endpoint is reachable and handles discovery, authentication, and the client. They compose well.
 
 ## Features
 
