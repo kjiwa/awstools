@@ -28,8 +28,6 @@ set -eu
 # Script Setup
 # ==============================================================================
 
-AWS_PROFILE="${AWS_PROFILE:-}"
-REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-2}}"
 CONNECT_METHOD="ssm"
 SSH_USER="ec2-user"
 SSH_KEY_FILE=""
@@ -37,6 +35,7 @@ TAG_KEYS=""
 TAG_VALUES=""
 TAG_COUNT=0
 SELECTED_ID=""
+SELECTED_IP=""
 SSM_COMMAND="sh"
 
 # ==============================================================================
@@ -44,25 +43,30 @@ SSM_COMMAND="sh"
 # ==============================================================================
 
 usage() {
+  exit_code="${1:-1}"
+
   cat >&2 <<EOF
 Usage: $0 [OPTIONS]
 
 Optional:
   -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
-  -p PROFILE        AWS profile
-  -r REGION         AWS region (default: us-east-2)
   -c METHOD         Connection method (ssh or ssm, default: ssm)
   -u USER           SSH user (default: ec2-user)
   -k KEYFILE        SSH private key file path
   -s COMMAND        SSM command to execute (default: sh)
+  -h                Show this help message
 
 Environment Variables:
-  AWS_PROFILE              AWS profile (can be overridden with -p)
-  AWS_REGION               AWS region (can be overridden with -r)
+  AWS_PROFILE              AWS profile
+  AWS_REGION               AWS region
   AWS_DEFAULT_REGION       AWS region fallback if AWS_REGION not set
   AWS_ACCESS_KEY_ID        AWS access key ID
   AWS_SECRET_ACCESS_KEY    AWS secret access key
   AWS_SESSION_TOKEN        AWS session token for temporary credentials
+
+Profile and region are resolved by the AWS CLI itself from the environment
+variables above or from ~/.aws/config; this tool passes no --profile or
+--region flags.
 
 Examples:
   $0
@@ -71,26 +75,31 @@ Examples:
   $0 -t Name=bastion -c ssh -k ~/.ssh/mykey.pem
   $0 -t Environment=staging -s "cd; bash -l"
 EOF
-  exit 1
+  exit "$exit_code"
 }
 
+# --- BEGIN SHARED: error_exit ---
 error_exit() {
   printf "ERROR: %s\n" "$1" >&2
   exit 1
 }
+# --- END SHARED: error_exit ---
 
 # ==============================================================================
 # String Utilities
 # ==============================================================================
 
+# --- BEGIN SHARED: trim_whitespace ---
 trim_whitespace() {
   printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
+# --- END SHARED: trim_whitespace ---
 
 # ==============================================================================
 # Tag Parsing & Validation
 # ==============================================================================
 
+# --- BEGIN SHARED: parse_tag_argument ---
 parse_tag_argument() {
   arg="$1"
 
@@ -105,7 +114,9 @@ parse_tag_argument() {
     ;;
   esac
 }
+# --- END SHARED: parse_tag_argument ---
 
+# --- BEGIN SHARED: validate_tag_format ---
 validate_tag_format() {
   original="$1"
   key="$2"
@@ -128,7 +139,18 @@ validate_tag_format() {
   PARSED_KEY="$trimmed_key"
   PARSED_VALUE="$trimmed_value"
 }
+# --- END SHARED: validate_tag_format ---
 
+reject_comma_in_tag_value() {
+  # EC2 filters treat ',' as a value-list separator (logical OR), which would
+  # silently contradict the documented exact-match AND semantics of -t.
+  value="$1"
+  case "$value" in
+  *,*) error_exit "Invalid tag value '$value': ',' is not supported (EC2 filters treat it as a value separator)" ;;
+  esac
+}
+
+# --- BEGIN SHARED: accumulate_tags ---
 accumulate_tags() {
   key="$1"
   value="$2"
@@ -145,36 +167,42 @@ $value"
 
   TAG_COUNT=$((TAG_COUNT + 1))
 }
+# --- END SHARED: accumulate_tags ---
 
+# --- BEGIN SHARED: get_tag_at_index ---
 get_tag_at_index() {
   idx="$1"
   TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${idx}p")
   TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
 }
+# --- END SHARED: get_tag_at_index ---
 
 # ==============================================================================
 # Argument Parsing
 # ==============================================================================
 
 parse_options() {
-  while getopts "p:t:r:c:u:k:s:h" opt; do
+  while getopts "t:c:u:k:s:h" opt; do
     case "$opt" in
-    p) AWS_PROFILE="$OPTARG" ;;
     t)
       parse_tag_argument "$OPTARG"
       validate_tag_format "$OPTARG" "$PARSED_KEY" "$PARSED_VALUE"
+      reject_comma_in_tag_value "$PARSED_VALUE"
       accumulate_tags "$PARSED_KEY" "$PARSED_VALUE"
       ;;
-    r) REGION="$OPTARG" ;;
     c) CONNECT_METHOD="$OPTARG" ;;
     u) SSH_USER="$OPTARG" ;;
     k) SSH_KEY_FILE="$OPTARG" ;;
     s) SSM_COMMAND="$OPTARG" ;;
-    h) usage ;;
+    h) usage 0 ;;
     *) usage ;;
     esac
   done
+
   shift $((OPTIND - 1))
+  [ $# -gt 0 ] && error_exit "Unexpected argument: $1"
+
+  return 0
 }
 
 # ==============================================================================
@@ -196,26 +224,17 @@ validate_ssh_key_file() {
   esac
 }
 
-validate_region() {
-  case "$REGION" in
-  *[\$\`\\\"\'\;]*) error_exit "Region contains unsafe characters" ;;
-  esac
-}
-
-validate_profile() {
-  [ -n "$AWS_PROFILE" ] || return 0
-  case "$AWS_PROFILE" in
-  *[\$\`\\\"\'\;]*)
-    error_exit "Profile contains unsafe characters"
-    ;;
+validate_ssh_user() {
+  case "$SSH_USER" in
+  *[\$\`\\\"\'\;\ ]*) error_exit "SSH user contains unsafe characters" ;;
+  "") error_exit "SSH user cannot be empty" ;;
   esac
 }
 
 validate_parameters() {
   validate_connect_method
   validate_ssh_key_file
-  validate_region
-  validate_profile
+  validate_ssh_user
 }
 
 # ==============================================================================
@@ -239,18 +258,6 @@ check_dependencies() {
 }
 
 # ==============================================================================
-# AWS Command Building
-# ==============================================================================
-
-build_aws_command() {
-  if [ -n "$AWS_PROFILE" ]; then
-    AWS_CMD="aws --profile $AWS_PROFILE --region $REGION --output text"
-  else
-    AWS_CMD="aws --region $REGION --output text"
-  fi
-}
-
-# ==============================================================================
 # Tag Filtering & Query
 # ==============================================================================
 
@@ -269,48 +276,31 @@ build_tag_display_message() {
   printf "EC2 instances with %d tag filters" "$TAG_COUNT"
 }
 
-build_tag_filter() {
-  idx="$1"
-  get_tag_at_index "$idx"
-  printf "Name=tag:%s,Values=%s" "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX"
-}
-
-build_ec2_tag_filters() {
-  if [ "$TAG_COUNT" -eq 0 ]; then
-    printf ""
-    return
-  fi
-
-  filters=""
-  i=1
-  while [ "$i" -le "$TAG_COUNT" ]; do
-    [ -n "$filters" ] && filters="$filters "
-    filters="$filters$(build_tag_filter "$i")"
-    i=$((i + 1))
-  done
-
-  printf "%s" "$filters"
+normalize_none_fields() {
+  awk -F'\t' 'BEGIN { OFS = "\t" }
+    { for (i = 1; i <= NF; i++) { if ($i == "None" || $i == "null") $i = "" }; print }'
 }
 
 query_instances() {
-  base_filter="Name=instance-state-name,Values=running"
-  tag_filters=$(build_ec2_tag_filters)
-  if [ -n "$tag_filters" ]; then
-    filters="$tag_filters $base_filter"
-  else
-    filters="$base_filter"
-  fi
+  set -- "Name=instance-state-name,Values=running"
+
+  i=1
+  while [ "$i" -le "$TAG_COUNT" ]; do
+    get_tag_at_index "$i"
+    set -- "$@" "Name=tag:$TAG_KEY_AT_INDEX,Values=$TAG_VALUE_AT_INDEX"
+    i=$((i + 1))
+  done
 
   message=$(build_tag_display_message)
   printf "Searching for %s...\n" "$message" >&2
 
-  # shellcheck disable=SC2086,SC2016
-  result=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
-    --filters $filters \
+  # shellcheck disable=SC2016
+  result=$(AWSENV_TTY=never aws ec2 describe-instances \
+    --filters "$@" \
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
-    2>/dev/null) || error_exit "Failed to query EC2 instances"
+    --output text) || error_exit "Failed to query EC2 instances"
 
-  printf "%s" "$result" | sort -t"$(printf '\t')" -k2,2
+  printf "%s" "$result" | normalize_none_fields | sort -t"$(printf '\t')" -k2,2
 }
 
 # ==============================================================================
@@ -322,6 +312,7 @@ parse_instance_list() {
   printf "%s\n" "$instance_list" | awk '{if (NF > 0) print $1}'
 }
 
+# --- BEGIN SHARED: count_lines ---
 count_lines() {
   text="$1"
   if [ -z "$text" ]; then
@@ -331,6 +322,7 @@ count_lines() {
 
   printf "%s\n" "$text" | grep -c .
 }
+# --- END SHARED: count_lines ---
 
 count_instances() {
   instance_ids="$1"
@@ -363,11 +355,13 @@ display_instances() {
   printf "\n" >&2
 }
 
+# --- BEGIN SHARED: read_user_selection ---
 read_user_selection() {
   max="$1"
+  noun="$2"
 
   while true; do
-    printf "Select instance (1-%d): " "$max" >&2
+    printf "Select %s (1-%d): " "$noun" "$max" >&2
     read -r selection </dev/tty || exit 1
 
     case "$selection" in
@@ -385,12 +379,7 @@ read_user_selection() {
     printf "ERROR: Selection must be between 1 and %d\n" "$max" >&2
   done
 }
-
-get_instance_by_index() {
-  instance_ids="$1"
-  index="$2"
-  printf "%s" "$instance_ids" | sed -n "${index}p"
-}
+# --- END SHARED: read_user_selection ---
 
 select_instance() {
   instance_list="$1"
@@ -401,48 +390,32 @@ select_instance() {
 
   if [ "$count" -eq 1 ]; then
     printf "Connecting to instance...\n" >&2
-    SELECTED_ID=$(printf "%s" "$instance_ids" | head -n 1)
-    return 0
+    selection=1
+  else
+    display_instances "$instance_list"
+    selection=$(read_user_selection "$count" "instance")
   fi
 
-  display_instances "$instance_list"
-  selection=$(read_user_selection "$count")
-  SELECTED_ID=$(get_instance_by_index "$instance_ids" "$selection")
+  SELECTED_LINE=$(printf "%s\n" "$instance_list" | sed -n "${selection}p")
+  SELECTED_ID=$(printf "%s" "$SELECTED_LINE" | cut -f1)
+  SELECTED_IP=$(printf "%s" "$SELECTED_LINE" | cut -f3)
 }
 
 # ==============================================================================
 # Connection Operations
 # ==============================================================================
 
-get_instance_ip() {
-  instance_id="$1"
-  ip=$(AWSENV_TTY=never $AWS_CMD ec2 describe-instances \
-    --instance-ids "$instance_id" \
-    --query 'Reservations[0].Instances[0].PublicIpAddress' \
-    2>/dev/null || printf "")
-
-  case "$ip" in
-  "" | "None" | "null") printf "" ;;
-  *) printf "%s" "$ip" ;;
-  esac
-}
-
-build_ssh_command() {
-  ssh_cmd="ssh -A"
-  [ -n "$SSH_KEY_FILE" ] && ssh_cmd="$ssh_cmd -i '$SSH_KEY_FILE'"
-  ssh_cmd="$ssh_cmd '$SSH_USER@$1'"
-  printf "%s" "$ssh_cmd"
-}
-
 connect_ssh() {
   printf "Connecting to %s via SSH...\n" "$SELECTED_ID" >&2
+  [ -z "$SELECTED_IP" ] && error_exit "Instance does not have a public IP address for SSH connection"
 
-  ip_address=$(get_instance_ip "$SELECTED_ID")
-  [ -z "$ip_address" ] && error_exit "Instance does not have a public IP address for SSH connection"
+  if [ -n "$SSH_KEY_FILE" ]; then
+    printf "ssh -A -i %s %s@%s\n" "$SSH_KEY_FILE" "$SSH_USER" "$SELECTED_IP" >&2
+    exec ssh -A -i "$SSH_KEY_FILE" "$SSH_USER@$SELECTED_IP"
+  fi
 
-  ssh_cmd=$(build_ssh_command "$ip_address")
-  printf "%s\n" "$ssh_cmd" >&2
-  eval "exec $ssh_cmd"
+  printf "ssh -A %s@%s\n" "$SSH_USER" "$SELECTED_IP" >&2
+  exec ssh -A "$SSH_USER@$SELECTED_IP"
 }
 
 build_ssm_parameters() {
@@ -452,7 +425,7 @@ build_ssm_parameters() {
 connect_ssm() {
   printf "Connecting to %s via SSM...\n" "$SELECTED_ID" >&2
   command_json=$(build_ssm_parameters)
-  AWSENV_TTY=always exec $AWS_CMD ssm start-session \
+  AWSENV_TTY=always exec aws ssm start-session \
     --target "$SELECTED_ID" \
     --document-name "AWS-StartInteractiveCommand" \
     --parameters "$command_json"
@@ -474,7 +447,6 @@ main() {
   parse_options "$@"
   validate_parameters
   check_dependencies
-  build_aws_command
 
   instance_data=$(query_instances)
   select_instance "$instance_data"

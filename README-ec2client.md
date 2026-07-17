@@ -26,12 +26,11 @@ ec2client.sh [OPTIONS]
 
 Options:
   -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
-  -p PROFILE        AWS profile
-  -r REGION         AWS region (default: us-east-2)
   -c METHOD         Connection method: ssh or ssm (default: ssm)
   -u USER           SSH user (default: ec2-user)
   -k KEYFILE        SSH private key path
   -s COMMAND        SSM command (default: sh)
+  -h                Show help
 
 Environment Variables:
   AWS_PROFILE, AWS_REGION, AWS_DEFAULT_REGION
@@ -44,6 +43,8 @@ Examples:
   ec2client.sh -t Name=bastion -c ssh -k ~/.ssh/key.pem
   ec2client.sh -t Environment=staging -s "cd; bash -l"
 ```
+
+Profile and region come entirely from the AWS CLI's own resolution: `AWS_PROFILE`, `AWS_REGION`/`AWS_DEFAULT_REGION`, and `~/.aws/config`. Select a profile with `export AWS_PROFILE=...` before running ec2client.
 
 ## Connection Methods
 
@@ -75,6 +76,7 @@ Examples:
 - Values can contain `=`: `-t Config=key=value` → key: `Config`, value: `key=value`
 - Keys with `=` not supported (extremely rare in practice)
 - Use quotes for spaces: `-t Name='Web Server'`
+- Values **cannot** contain `,`: EC2 filters treat a comma inside a `Values=` field as a list separator (logical OR), which would silently contradict the documented exact-match AND semantics of `-t`
 - Tag matching is case-sensitive
 
 ## Examples
