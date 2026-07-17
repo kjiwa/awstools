@@ -7,7 +7,7 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 - Multiple tag-based filtering with AND logic
 - Auto-connects with single match
 - Auto-detection of authentication methods
-- RDS and Aurora (reader/writer endpoints)
+- Standalone RDS instances, Aurora clusters (reader/writer endpoints), and Multi-AZ DB clusters
 - Multiple authentication types
 - SSL/TLS connections (configurable)
 - Docker-based clients (no local installation)
@@ -27,12 +27,16 @@ Connect to RDS and Aurora databases with automatic authentication detection. Sup
 
 | Engine | Client | Auth Support |
 |--------|--------|--------------|
-| PostgreSQL / Aurora PostgreSQL | psql | IAM, Secret, Manual |
-| MySQL / Aurora MySQL / MariaDB | mysql | IAM, Secret, Manual |
-| Oracle (EE, SE2, CDB variants) | sqlplus | Secret, Manual |
-| SQL Server (EE, SE, EX, Web) | sqlcmd | Secret, Manual |
+| PostgreSQL / Aurora PostgreSQL (standalone, Aurora, or Multi-AZ cluster) | psql | IAM, Secret, Manual |
+| MySQL / Aurora MySQL / MariaDB (standalone, Aurora, or Multi-AZ cluster) | mysql | IAM, Secret, Manual |
+| Oracle (EE, SE2, CDB variants) | sqlplus | Manual password entry only — see note below |
+| SQL Server (EE, SE, EX, Web) | sqlcmd | IAM, Secret, Manual |
 
 All clients run in Docker containers with SSL enabled by default.
+
+**Oracle password entry**: no shell inside the Oracle instant client container can safely receive a password via argv or environment for `sqlplus`, so rdsclient lets `sqlplus` itself prompt for the password on the attached terminal, regardless of `-a`. With `-a secret`, rdsclient retrieves the secret from Secrets Manager but does not display or forward it automatically — look it up separately (e.g. `aws secretsmanager get-secret-value`) and paste it in when `sqlplus` prompts.
+
+**Non-RDS/Aurora clusters**: `describe-db-clusters` also returns DocumentDB and Neptune clusters, which use unrelated client tooling; rdsclient filters those out and only lists Aurora/Multi-AZ clusters running a supported engine.
 
 ## Usage
 
@@ -41,12 +45,11 @@ rdsclient.sh [OPTIONS]
 
 Options:
   -t TAG=VALUE      Tag filter (can be specified multiple times for AND logic)
-  -p PROFILE        AWS profile
-  -r REGION         AWS region (default: us-east-2)
-  -e ENDPOINT_TYPE  Aurora endpoint: reader or writer
+  -e ENDPOINT_TYPE  Aurora/cluster endpoint: reader or writer
   -a AUTH_TYPE      Authentication: iam, secret, or manual
-  -u DB_USER        Database user (sets auth to manual)
+  -u DB_USER        Database user (sets auth to manual unless -a is also given)
   -s SSL_MODE       Use SSL: true or false (default: true)
+  -h                Show help
 
 Environment Variables:
   AWS_PROFILE, AWS_REGION, AWS_DEFAULT_REGION
@@ -60,6 +63,16 @@ Examples:
   rdsclient.sh -u myuser -a manual
   rdsclient.sh -t Environment=dev -s false
 ```
+
+Profile and region come entirely from the AWS CLI's own resolution: `AWS_PROFILE`, `AWS_REGION`/`AWS_DEFAULT_REGION`, and `~/.aws/config`. Select a profile with `export AWS_PROFILE=...` before running rdsclient.
+
+**`-u` semantics**: passing `-u DB_USER` alone selects manual authentication (equivalent to `-u DB_USER -a manual`) unless `-a` is also given explicitly, in which case `-u` supplies the connecting username for that auth method too — e.g. `-u appuser -a iam` generates an IAM token for `appuser` rather than the database's master user.
+
+**`DatabaseName` defaults**: RDS instances/clusters may not have a `DatabaseName` set. rdsclient handles this per engine:
+- PostgreSQL/Aurora PostgreSQL: defaults to the `postgres` database
+- MySQL/Aurora MySQL/MariaDB: connects without selecting a database
+- SQL Server: connects without selecting a database
+- Oracle: `DatabaseName` is the connect descriptor's service name and is required; rdsclient errors out if it's missing
 
 ## Authentication Methods
 
@@ -110,8 +123,8 @@ Examples:
 $ ./rdsclient.sh -t Environment=production -t Application=analytics
 Searching for databases with 2 tag filters...
 
-1. [Aurora] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-abc.us-east-2.rds.amazonaws.com
-2. [Aurora] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-ro-abc.us-east-2.rds.amazonaws.com
+1. [Cluster] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-abc.us-east-2.rds.amazonaws.com
+2. [Cluster] analytics-cluster (aurora-postgresql): analytics-cluster.cluster-ro-abc.us-east-2.rds.amazonaws.com
 3. [RDS] reports-db (postgres): reports-db.ghi789.us-east-2.rds.amazonaws.com
 
 Select database (1-3): 1
