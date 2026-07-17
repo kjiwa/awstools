@@ -91,7 +91,7 @@ sudo chmod +x /usr/local/bin/{awsenv,ec2client,rdsclient}
 for cmd in aws aws_completer session-manager-plugin; do
   sudo tee /usr/local/bin/$cmd > /dev/null << 'EOF'
 #!/bin/sh
-exec /usr/local/bin/awsenv "$(basename "$0")" "$@"
+exec "/usr/local/bin/awsenv" "$(basename "$0")" "$@"
 EOF
   sudo chmod +x /usr/local/bin/$cmd
 done
@@ -107,8 +107,11 @@ complete -C aws_completer aws
 **Zsh** (`~/.zshrc`):
 ```zsh
 autoload -Uz compinit && compinit
+autoload -Uz +X bashcompinit && bashcompinit
 complete -C aws_completer aws
 ```
+
+`complete -C` is a bash builtin; zsh needs `bashcompinit` loaded first.
 
 ## Uninstall
 
@@ -118,3 +121,13 @@ sudo rm -f /usr/local/bin/{awsenv,ec2client,rdsclient,aws,aws_completer,session-
 
 # Remove completion (edit ~/.bashrc or ~/.zshrc manually)
 ```
+
+## Testing
+
+The repo has a fixture-based test suite in `tests/` with stub `aws`/`docker`/`ssh`/`session-manager-plugin` commands, so it never touches real AWS accounts or Docker. Run the whole suite (shellcheck, the shared-code drift check, and the unit/end-to-end tests) with:
+
+```bash
+./tests/run.sh
+```
+
+It's runnable from any working directory and exits non-zero if anything fails.

@@ -37,6 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ==============================================================================
 
 usage() {
+  exit_code="${1:-1}"
+
   cat >&2 <<EOF
 Usage: $0 -d DIRECTORY [-c SHELL]
 
@@ -52,7 +54,7 @@ Examples:
   $0 -d ~/.local/bin -c bash
   sudo $0 -d /usr/local/bin -c zsh
 EOF
-  exit 1
+  exit "$exit_code"
 }
 
 error_exit() {
@@ -69,10 +71,13 @@ parse_options() {
     case "$opt" in
     d) TARGET_DIR="$OPTARG" ;;
     c) INSTALL_COMPLETION="$OPTARG" ;;
-    h) usage ;;
+    h) usage 0 ;;
     *) usage ;;
     esac
   done
+
+  shift $((OPTIND - 1))
+  [ $# -gt 0 ] && error_exit "Unexpected argument: $1"
 
   if [ -z "$TARGET_DIR" ]; then
     error_exit "Target directory is required (-d option)"
@@ -144,7 +149,7 @@ create_wrapper_script() {
   printf "Creating wrapper: %s\n" "$name"
   cat >"$target" <<EOF
 #!/bin/sh
-exec $TARGET_DIR/awsenv "\$(basename "\$0")" "\$@"
+exec "$TARGET_DIR/awsenv" "\$(basename "\$0")" "\$@"
 EOF
   chmod +x "$target" || error_exit "Failed to set executable permission on $target"
 }
@@ -160,12 +165,8 @@ install_wrapper_scripts() {
 # ==============================================================================
 
 get_user_home() {
-  if [ -n "${HOME:-}" ]; then
-    printf "%s" "$HOME"
-  else
-    # Get home directory from /etc/passwd
-    printf "%s" "$(getent passwd "$(id -u)" | cut -d: -f6)"
-  fi
+  [ -z "${HOME:-}" ] && error_exit "HOME is not set"
+  printf "%s" "$HOME"
 }
 
 get_shell_rc_file() {
@@ -187,7 +188,7 @@ get_completion_commands() {
     printf "complete -C aws_completer aws"
     ;;
   zsh)
-    printf "autoload -Uz compinit && compinit\ncomplete -C aws_completer aws"
+    printf "autoload -Uz compinit && compinit\nautoload -Uz +X bashcompinit && bashcompinit\ncomplete -C aws_completer aws"
     ;;
   *)
     return 1

@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# Stub docker for tests. Logs its full argv to $STUB_LOG (if set) and exits
+# successfully for every subcommand used by awsenv.sh/rdsclient.sh.
+#
+#   STUB_DOCKER_IMAGE_EXISTS=1       makes `docker image inspect` succeed
+#                                    (image already built); unset/0 makes it
+#                                    fail so the build path is exercised.
+#   STUB_DOCKER_BUILD_STDOUT_NOISE=1 makes `docker build` print progress
+#                                    noise to its OWN stdout, simulating the
+#                                    classic builder, to verify callers
+#                                    redirect it away from captured output.
+
+set -eu
+
+if [ -n "${STUB_LOG:-}" ]; then
+  {
+    printf '=== docker ===\n'
+    for a in "$@"; do
+      printf '%s\n' "$a"
+    done
+  } >>"$STUB_LOG"
+fi
+
+case "${1:-}" in
+image)
+  [ "${STUB_DOCKER_IMAGE_EXISTS:-0}" = "1" ] && exit 0
+  exit 1
+  ;;
+build)
+  if [ "${STUB_DOCKER_BUILD_STDOUT_NOISE:-0}" = "1" ]; then
+    printf 'SIMULATED_BUILD_PROGRESS\n'
+  fi
+  exit 0
+  ;;
+*)
+  exit 0
+  ;;
+esac

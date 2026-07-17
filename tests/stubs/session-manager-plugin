@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# Stub session-manager-plugin for tests. Only ever existence-checked via
+# `command -v`, but log invocations too in case that changes.
+
+set -eu
+
+if [ -n "${STUB_LOG:-}" ]; then
+  {
+    printf '=== session-manager-plugin ===\n'
+    for a in "$@"; do
+      printf '%s\n' "$a"
+    done
+  } >>"$STUB_LOG"
+fi
+
+exit 0

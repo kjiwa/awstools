@@ -1,0 +1,18 @@
+{
+  "DBInstances": [
+    {
+      "DBInstanceIdentifier": "standalone-postgres",
+      "Engine": "postgres",
+      "Endpoint": {
+        "Address": "standalone-postgres.abc123.us-east-2.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "DBClusterIdentifier": null,
+      "MasterUsername": "postgres",
+      "IAMDatabaseAuthenticationEnabled": true,
+      "TagList": [
+        {"Key": "Environment", "Value": "production"}
+      ]
+    }
+  ]
+}

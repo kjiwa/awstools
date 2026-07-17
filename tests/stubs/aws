@@ -1,0 +1,68 @@
+#!/bin/sh
+
+# Stub AWS CLI for tests. Logs its full argv to $STUB_LOG (if set) and
+# returns canned fixture data selected via environment variables so tests
+# can exercise different data shapes without touching the network.
+#
+# Recognized environment variables:
+#   FIXTURE_DB_INSTANCES   Path to a describe-db-instances JSON fixture
+#   FIXTURE_DB_CLUSTERS    Path to a describe-db-clusters JSON fixture
+#   FIXTURE_EC2_INSTANCES  Path to a describe-instances TSV fixture
+#   FIXTURE_IAM_TOKEN      Literal string returned for generate-db-auth-token
+#   FIXTURE_SECRET_STRING  Literal string returned for secretsmanager get-secret-value
+#   STUB_AWS_EXIT          If set, forces this exit status (simulates a CLI failure)
+
+set -eu
+
+if [ -n "${STUB_LOG:-}" ]; then
+  {
+    printf '=== aws ===\n'
+    for a in "$@"; do
+      printf '%s\n' "$a"
+    done
+  } >>"$STUB_LOG"
+fi
+
+if [ -n "${STUB_AWS_EXIT:-}" ]; then
+  echo "stub aws: forced failure" >&2
+  exit "$STUB_AWS_EXIT"
+fi
+
+service="${1:-}"
+subcommand="${2:-}"
+
+case "$service.$subcommand" in
+ec2.describe-instances)
+  [ -n "${FIXTURE_EC2_INSTANCES:-}" ] && cat "$FIXTURE_EC2_INSTANCES"
+  ;;
+rds.describe-db-instances)
+  if [ -n "${FIXTURE_DB_INSTANCES:-}" ]; then
+    cat "$FIXTURE_DB_INSTANCES"
+  else
+    printf '{"DBInstances":[]}'
+  fi
+  ;;
+rds.describe-db-clusters)
+  if [ -n "${FIXTURE_DB_CLUSTERS:-}" ]; then
+    cat "$FIXTURE_DB_CLUSTERS"
+  else
+    printf '{"DBClusters":[]}'
+  fi
+  ;;
+rds.generate-db-auth-token)
+  printf "%s" "${FIXTURE_IAM_TOKEN:-fake-iam-token}"
+  ;;
+secretsmanager.get-secret-value)
+  if [ -n "${FIXTURE_SECRET_STRING:-}" ]; then
+    printf "%s" "$FIXTURE_SECRET_STRING"
+  else
+    printf '%s' '{"username":"secretuser","password":"secretpass"}'
+  fi
+  ;;
+ssm.start-session)
+  printf "stub ssm session started\n"
+  ;;
+*)
+  printf "{}"
+  ;;
+esac

@@ -1,0 +1,46 @@
+{
+  "DBClusters": [
+    {
+      "DBClusterIdentifier": "analytics-cluster",
+      "Engine": "aurora-postgresql",
+      "Endpoint": "analytics-cluster.cluster-abc123.us-east-2.rds.amazonaws.com",
+      "ReaderEndpoint": "analytics-cluster.cluster-ro-abc123.us-east-2.rds.amazonaws.com",
+      "Port": 5432,
+      "DatabaseName": "analytics",
+      "MasterUsername": "admin",
+      "IAMDatabaseAuthenticationEnabled": true,
+      "TagList": [
+        {"Key": "Environment", "Value": "production"},
+        {"Key": "Application", "Value": "analytics"}
+      ]
+    },
+    {
+      "DBClusterIdentifier": "multiaz-postgres-cluster",
+      "Engine": "postgres",
+      "Endpoint": "multiaz-postgres-cluster.cluster-def456.us-east-2.rds.amazonaws.com",
+      "Port": 5432,
+      "MasterUsername": "admin",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "TagList": [
+        {"Key": "Environment", "Value": "production"}
+      ]
+    },
+    {
+      "DBClusterIdentifier": "some-docdb-cluster",
+      "Engine": "docdb",
+      "Endpoint": "some-docdb-cluster.cluster-ghi789.us-east-2.docdb.amazonaws.com",
+      "Port": 27017,
+      "MasterUsername": "docdbadmin",
+      "TagList": [
+        {"Key": "Environment", "Value": "production"}
+      ]
+    },
+    {
+      "DBClusterIdentifier": "some-neptune-cluster",
+      "Engine": "neptune",
+      "Endpoint": "some-neptune-cluster.cluster-jkl012.us-east-2.neptune.amazonaws.com",
+      "Port": 8182,
+      "TagList": []
+    }
+  ]
+}

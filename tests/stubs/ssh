@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# Stub ssh for tests. Logs its full argv to $STUB_LOG (if set) and exits
+# successfully instead of opening a real connection.
+
+set -eu
+
+if [ -n "${STUB_LOG:-}" ]; then
+  {
+    printf '=== ssh ===\n'
+    for a in "$@"; do
+      printf '%s\n' "$a"
+    done
+  } >>"$STUB_LOG"
+fi
+
+exit 0
