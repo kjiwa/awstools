@@ -2,9 +2,7 @@
 
 Connect to RDS and Aurora databases with automatic authentication detection. Supports IAM, Secrets Manager, and manual authentication.
 
-This is the complete reference; for the overview, quick start, and comparisons with related tools, see the [main README](README.md).
-
-**Related tools**: [basti](https://github.com/basti-app/basti) solves the complementary problem — network access to databases in private VPC subnets via an auto-managed bastion and SSM port forwarding. rdsclient assumes the endpoint is reachable and handles discovery, authentication, and the client. They compose well.
+This is the complete reference; for the overview, quick start, and installation, see the [main README](README.md).
 
 ## Features
 
@@ -25,8 +23,6 @@ This is the complete reference; for the overview, quick start, and comparisons w
   - `rds-db:connect` for IAM authentication
   - `secretsmanager:GetSecretValue` for Secrets Manager authentication
 
-**Important**: rdsclient cannot be run inside awsenv containers (`awsenv rdsclient ...`) as it creates Docker-in-Docker issues. If awsenv wrapper scripts are installed, rdsclient works directly with the system-wide AWS CLI.
-
 ## Supported Databases
 
 | Engine | Client | Auth Support |
@@ -39,8 +35,6 @@ This is the complete reference; for the overview, quick start, and comparisons w
 All clients run in Docker containers with SSL enabled by default.
 
 **Oracle password entry**: no shell inside the Oracle instant client container can safely receive a password via argv or environment for `sqlplus`, so rdsclient lets `sqlplus` itself prompt for the password on the attached terminal, regardless of `-a`. With `-a secret`, rdsclient retrieves the secret from Secrets Manager but does not display or forward it automatically — look it up separately (e.g. `aws secretsmanager get-secret-value`) and paste it in when `sqlplus` prompts.
-
-**Non-RDS/Aurora clusters**: `describe-db-clusters` also returns DocumentDB and Neptune clusters, which use unrelated client tooling; rdsclient filters those out and only lists Aurora/Multi-AZ clusters running a supported engine.
 
 ## Usage
 

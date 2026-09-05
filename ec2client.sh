@@ -24,10 +24,6 @@
 
 set -eu
 
-# ==============================================================================
-# Script Setup
-# ==============================================================================
-
 CONNECT_METHOD="ssm"
 SSH_USER="ec2-user"
 SSH_KEY_FILE=""
@@ -38,12 +34,8 @@ SELECTED_ID=""
 SELECTED_IP=""
 SSM_COMMAND="sh"
 
-# ==============================================================================
-# User Interface
-# ==============================================================================
-
 usage() {
-  exit_code="${1:-1}"
+  _usage_exit_code="${1:-1}"
 
   cat >&2 <<EOF
 Usage: $0 [OPTIONS]
@@ -75,7 +67,7 @@ Examples:
   $0 -t Name=bastion -c ssh -k ~/.ssh/mykey.pem
   $0 -t Environment=staging -s "cd; bash -l"
 EOF
-  exit "$exit_code"
+  exit "$_usage_exit_code"
 }
 
 # --- BEGIN SHARED: error_exit ---
@@ -85,28 +77,20 @@ error_exit() {
 }
 # --- END SHARED: error_exit ---
 
-# ==============================================================================
-# String Utilities
-# ==============================================================================
-
 # --- BEGIN SHARED: trim_whitespace ---
 trim_whitespace() {
   printf "%s" "$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 # --- END SHARED: trim_whitespace ---
 
-# ==============================================================================
-# Tag Parsing & Validation
-# ==============================================================================
-
 # --- BEGIN SHARED: parse_tag_argument ---
 parse_tag_argument() {
-  arg="$1"
+  _parse_arg="$1"
 
-  case "$arg" in
+  case "$_parse_arg" in
   *=*)
-    PARSED_KEY="${arg%%=*}"
-    PARSED_VALUE="${arg#*=}"
+    PARSED_KEY="${_parse_arg%%=*}"
+    PARSED_VALUE="${_parse_arg#*=}"
     ;;
   *)
     PARSED_KEY=""
@@ -118,51 +102,49 @@ parse_tag_argument() {
 
 # --- BEGIN SHARED: validate_tag_format ---
 validate_tag_format() {
-  original="$1"
-  key="$2"
-  value="$3"
+  _val_original="$1"
+  _val_key="$2"
+  _val_value="$3"
 
-  [ -z "$key" ] && error_exit "Invalid tag format '$original': must contain '=' character"
+  [ -z "$_val_key" ] && error_exit "Invalid tag format '$_val_original': must contain '=' character"
 
-  trimmed_key=$(trim_whitespace "$key")
-  [ -z "$trimmed_key" ] && error_exit "Invalid tag format '$original': key cannot be empty"
-  case "$trimmed_key" in
-  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': key contains unsafe characters" ;;
+  _val_trimmed_key=$(trim_whitespace "$_val_key")
+  [ -z "$_val_trimmed_key" ] && error_exit "Invalid tag format '$_val_original': key cannot be empty"
+  case "$_val_trimmed_key" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$_val_original': key contains unsafe characters" ;;
   esac
 
-  trimmed_value=$(trim_whitespace "$value")
-  [ -z "$trimmed_value" ] && error_exit "Invalid tag format '$original': value cannot be empty"
-  case "$trimmed_value" in
-  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': value contains unsafe characters" ;;
+  _val_trimmed_value=$(trim_whitespace "$_val_value")
+  [ -z "$_val_trimmed_value" ] && error_exit "Invalid tag format '$_val_original': value cannot be empty"
+  case "$_val_trimmed_value" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$_val_original': value contains unsafe characters" ;;
   esac
 
-  PARSED_KEY="$trimmed_key"
-  PARSED_VALUE="$trimmed_value"
+  PARSED_KEY="$_val_trimmed_key"
+  PARSED_VALUE="$_val_trimmed_value"
 }
 # --- END SHARED: validate_tag_format ---
 
 reject_comma_in_tag_value() {
-  # EC2 filters treat ',' as a value-list separator (logical OR), which would
-  # silently contradict the documented exact-match AND semantics of -t.
-  value="$1"
-  case "$value" in
-  *,*) error_exit "Invalid tag value '$value': ',' is not supported (EC2 filters treat it as a value separator)" ;;
+  _reject_value="$1"
+  case "$_reject_value" in
+  *,*) error_exit "Invalid tag value '$_reject_value': ',' is not supported (EC2 filters treat it as a value separator)" ;;
   esac
 }
 
 # --- BEGIN SHARED: accumulate_tags ---
 accumulate_tags() {
-  key="$1"
-  value="$2"
+  _acc_key="$1"
+  _acc_value="$2"
 
   if [ -z "$TAG_KEYS" ]; then
-    TAG_KEYS="$key"
-    TAG_VALUES="$value"
+    TAG_KEYS="$_acc_key"
+    TAG_VALUES="$_acc_value"
   else
     TAG_KEYS="$TAG_KEYS
-$key"
+$_acc_key"
     TAG_VALUES="$TAG_VALUES
-$value"
+$_acc_value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -171,19 +153,15 @@ $value"
 
 # --- BEGIN SHARED: get_tag_at_index ---
 get_tag_at_index() {
-  idx="$1"
-  TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${idx}p")
-  TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
+  _get_idx="$1"
+  TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${_get_idx}p")
+  TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${_get_idx}p")
 }
 # --- END SHARED: get_tag_at_index ---
 
-# ==============================================================================
-# Argument Parsing
-# ==============================================================================
-
 parse_options() {
-  while getopts "t:c:u:k:s:h" opt; do
-    case "$opt" in
+  while getopts "t:c:u:k:s:h" _parse_opt; do
+    case "$_parse_opt" in
     t)
       parse_tag_argument "$OPTARG"
       validate_tag_format "$OPTARG" "$PARSED_KEY" "$PARSED_VALUE"
@@ -204,10 +182,6 @@ parse_options() {
 
   return 0
 }
-
-# ==============================================================================
-# Parameter Validation
-# ==============================================================================
 
 validate_connect_method() {
   case "$CONNECT_METHOD" in
@@ -237,13 +211,9 @@ validate_parameters() {
   validate_ssh_user
 }
 
-# ==============================================================================
-# Dependency Checking
-# ==============================================================================
-
 check_dependencies() {
-  for tool in aws jq; do
-    command -v "$tool" >/dev/null 2>&1 || error_exit "'$tool' is required but not found"
+  for _check_tool in aws jq; do
+    command -v "$_check_tool" >/dev/null 2>&1 || error_exit "'$_check_tool' is required but not found"
   done
 
   if [ "$CONNECT_METHOD" = "ssm" ]; then
@@ -256,10 +226,6 @@ check_dependencies() {
 
   return 0
 }
-
-# ==============================================================================
-# Tag Filtering & Query
-# ==============================================================================
 
 build_tag_display_message() {
   if [ "$TAG_COUNT" -eq 0 ]; then
@@ -284,71 +250,67 @@ normalize_none_fields() {
 query_instances() {
   set -- "Name=instance-state-name,Values=running"
 
-  i=1
-  while [ "$i" -le "$TAG_COUNT" ]; do
-    get_tag_at_index "$i"
+  _query_i=1
+  while [ "$_query_i" -le "$TAG_COUNT" ]; do
+    get_tag_at_index "$_query_i"
     set -- "$@" "Name=tag:$TAG_KEY_AT_INDEX,Values=$TAG_VALUE_AT_INDEX"
-    i=$((i + 1))
+    _query_i=$((_query_i + 1))
   done
 
-  message=$(build_tag_display_message)
-  printf "Searching for %s...\n" "$message" >&2
+  _query_msg=$(build_tag_display_message)
+  printf "Searching for %s...\n" "$_query_msg" >&2
 
   # shellcheck disable=SC2016
-  result=$(AWSENV_TTY=never aws ec2 describe-instances \
+  _query_res=$(AWSENV_TTY=never aws ec2 describe-instances \
     --filters "$@" \
     --query 'Reservations[].Instances[].[InstanceId,Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
     --output text) || error_exit "Failed to query EC2 instances"
 
-  printf "%s" "$result" | normalize_none_fields | sort -t"$(printf '\t')" -k2,2
+  printf "%s" "$_query_res" | normalize_none_fields | sort -t"$(printf '\t')" -k2,2
 }
 
-# ==============================================================================
-# Instance Selection
-# ==============================================================================
-
 parse_instance_list() {
-  instance_list="$1"
-  printf "%s\n" "$instance_list" | awk '{if (NF > 0) print $1}'
+  _parse_inst_list="$1"
+  printf "%s\n" "$_parse_inst_list" | awk '{if (NF > 0) print $1}'
 }
 
 # --- BEGIN SHARED: count_lines ---
 count_lines() {
-  text="$1"
-  if [ -z "$text" ]; then
+  _count_text="$1"
+  if [ -z "$_count_text" ]; then
     printf "0"
     return
   fi
 
-  printf "%s\n" "$text" | grep -c .
+  printf "%s\n" "$_count_text" | grep -c .
 }
 # --- END SHARED: count_lines ---
 
 count_instances() {
-  instance_ids="$1"
-  count_lines "$instance_ids"
+  _count_inst_ids="$1"
+  count_lines "$_count_inst_ids"
 }
 
 display_instance_line() {
-  index="$1"
-  id="$2"
-  name="$3"
-  ip="$4"
+  _disp_idx="$1"
+  _disp_id="$2"
+  _disp_name="$3"
+  _disp_ip="$4"
 
-  display_name="${name:-$id}"
-  display_ip="${ip:-no-public-ip}"
-  printf "%d. %s (%s): %s\n" "$index" "$display_name" "$id" "$display_ip" >&2
+  _disp_display_name="${_disp_name:-$_disp_id}"
+  _disp_display_ip="${_disp_ip:-no-public-ip}"
+  printf "%d. %s (%s): %s\n" "$_disp_idx" "$_disp_display_name" "$_disp_id" "$_disp_display_ip" >&2
 }
 
 display_instances() {
-  instance_list="$1"
+  _disp_inst_list="$1"
 
   printf "\n" >&2
-  i=1
-  printf "%s\n" "$instance_list" | while IFS="$(printf '\t')" read -r id name ip; do
-    if [ -n "$id" ]; then
-      display_instance_line "$i" "$id" "$name" "$ip"
-      i=$((i + 1))
+  _disp_inst_i=1
+  printf "%s\n" "$_disp_inst_list" | while IFS="$(printf '\t')" read -r _disp_inst_id _disp_inst_name _disp_inst_ip; do
+    if [ -n "$_disp_inst_id" ]; then
+      display_instance_line "$_disp_inst_i" "$_disp_inst_id" "$_disp_inst_name" "$_disp_inst_ip"
+      _disp_inst_i=$((_disp_inst_i + 1))
     fi
   done
 
@@ -357,53 +319,49 @@ display_instances() {
 
 # --- BEGIN SHARED: read_user_selection ---
 read_user_selection() {
-  max="$1"
-  noun="$2"
+  _rus_max="$1"
+  _rus_noun="$2"
 
   while true; do
-    printf "Select %s (1-%d): " "$noun" "$max" >&2
-    read -r selection </dev/tty || exit 1
+    printf "Select %s (1-%d): " "$_rus_noun" "$_rus_max" >&2
+    read -r _rus_selection </dev/tty || exit 1
 
-    case "$selection" in
+    case "$_rus_selection" in
     '' | *[!0-9]*)
       printf "ERROR: Invalid selection\n" >&2
       continue
       ;;
     esac
 
-    if [ "$selection" -ge 1 ] && [ "$selection" -le "$max" ]; then
-      printf "%s" "$selection"
+    if [ "$_rus_selection" -ge 1 ] && [ "$_rus_selection" -le "$_rus_max" ]; then
+      printf "%s" "$_rus_selection"
       return 0
     fi
 
-    printf "ERROR: Selection must be between 1 and %d\n" "$max" >&2
+    printf "ERROR: Selection must be between 1 and %d\n" "$_rus_max" >&2
   done
 }
 # --- END SHARED: read_user_selection ---
 
 select_instance() {
-  instance_list="$1"
-  instance_ids=$(parse_instance_list "$instance_list")
-  count=$(count_instances "$instance_ids")
+  _select_inst_list="$1"
+  _select_inst_ids=$(parse_instance_list "$_select_inst_list")
+  _select_inst_count=$(count_instances "$_select_inst_ids")
 
-  [ "$count" -eq 0 ] && error_exit "No instances found"
+  [ "$_select_inst_count" -eq 0 ] && error_exit "No instances found"
 
-  if [ "$count" -eq 1 ]; then
+  if [ "$_select_inst_count" -eq 1 ]; then
     printf "Connecting to instance...\n" >&2
-    selection=1
+    _select_inst_choice=1
   else
-    display_instances "$instance_list"
-    selection=$(read_user_selection "$count" "instance")
+    display_instances "$_select_inst_list"
+    _select_inst_choice=$(read_user_selection "$_select_inst_count" "instance")
   fi
 
-  SELECTED_LINE=$(printf "%s\n" "$instance_list" | sed -n "${selection}p")
+  SELECTED_LINE=$(printf "%s\n" "$_select_inst_list" | sed -n "${_select_inst_choice}p")
   SELECTED_ID=$(printf "%s" "$SELECTED_LINE" | cut -f1)
   SELECTED_IP=$(printf "%s" "$SELECTED_LINE" | cut -f3)
 }
-
-# ==============================================================================
-# Connection Operations
-# ==============================================================================
 
 connect_ssh() {
   printf "Connecting to %s via SSH...\n" "$SELECTED_ID" >&2
@@ -424,11 +382,11 @@ build_ssm_parameters() {
 
 connect_ssm() {
   printf "Connecting to %s via SSM...\n" "$SELECTED_ID" >&2
-  command_json=$(build_ssm_parameters)
+  _connect_ssm_cmd_json=$(build_ssm_parameters)
   AWSENV_TTY=always exec aws ssm start-session \
     --target "$SELECTED_ID" \
     --document-name "AWS-StartInteractiveCommand" \
-    --parameters "$command_json"
+    --parameters "$_connect_ssm_cmd_json"
 }
 
 connect() {
@@ -439,17 +397,13 @@ connect() {
   esac
 }
 
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
-
 main() {
   parse_options "$@"
   validate_parameters
   check_dependencies
 
-  instance_data=$(query_instances)
-  select_instance "$instance_data"
+  _main_inst_data=$(query_instances)
+  select_instance "$_main_inst_data"
   connect
 }
 

@@ -16,79 +16,81 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly SCRIPT_DIR
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-TMP1="$(mktemp)"
-TMP2="$(mktemp)"
-cleanup() {
-  rm -f "$TMP1" "$TMP2"
-}
-trap cleanup EXIT INT TERM HUP
+readonly REPO_DIR
 
 extract_block() {
-  # extract_block <file> <marker-name>
-  file="$1"
-  marker="$2"
-  awk -v m="$marker" '
+  _extract_file="$1"
+  _extract_marker="$2"
+  awk -v m="$_extract_marker" '
     index($0, "BEGIN SHARED: " m " ---") { p = 1; next }
     index($0, "END SHARED: " m " ---") { p = 0 }
     p { print }
-  ' "$file"
+  ' "$_extract_file"
 }
 
 list_markers() {
-  file="$1"
-  grep -o 'BEGIN SHARED: [A-Za-z0-9_-]*' "$file" 2>/dev/null | sed 's/^BEGIN SHARED: //'
+  _list_file="$1"
+  grep -o 'BEGIN SHARED: [A-Za-z0-9_-]*' "$_list_file" 2>/dev/null | sed 's/^BEGIN SHARED: //'
 }
 
-scripts=""
-for f in "$REPO_DIR"/*.sh; do
-  [ -f "$f" ] || continue
-  scripts="$scripts $f"
-done
+main() {
+  _main_tmp1="$(mktemp)"
+  _main_tmp2="$(mktemp)"
+  trap 'rm -f "$_main_tmp1" "$_main_tmp2"' EXIT INT TERM HUP
 
-all_markers=""
-for f in $scripts; do
-  markers=$(list_markers "$f") || true
-  [ -n "$markers" ] && all_markers="$all_markers
-$markers"
-done
-
-unique_markers=$(printf "%s\n" "$all_markers" | grep -v '^$' | sort -u || true)
-
-failures=0
-checked=0
-
-if [ -z "$unique_markers" ]; then
-  echo "check-shared.sh: no SHARED markers found"
-else
-  for marker in $unique_markers; do
-    reference_file=""
-    for f in $scripts; do
-      grep -q "BEGIN SHARED: $marker ---" "$f" 2>/dev/null || continue
-
-      if [ -z "$reference_file" ]; then
-        reference_file="$f"
-        extract_block "$f" "$marker" >"$TMP1"
-        continue
-      fi
-
-      extract_block "$f" "$marker" >"$TMP2"
-      checked=$((checked + 1))
-
-      if ! diff -q "$TMP1" "$TMP2" >/dev/null 2>&1; then
-        echo "DRIFT: shared block '$marker' differs between $reference_file and $f"
-        diff "$TMP1" "$TMP2" || true
-        failures=$((failures + 1))
-      fi
-    done
+  _main_scripts=""
+  for _main_f in "$REPO_DIR"/*.sh; do
+    [ -f "$_main_f" ] || continue
+    _main_scripts="$_main_scripts $_main_f"
   done
-fi
 
-if [ "$failures" -gt 0 ]; then
-  echo "check-shared.sh: $failures shared block(s) drifted"
-else
-  printf "check-shared.sh: %d marker(s) verified byte-identical across copies\n" "$checked"
-fi
+  _main_all_markers=""
+  for _main_f in $_main_scripts; do
+    _main_file_markers=$(list_markers "$_main_f") || true
+    [ -n "$_main_file_markers" ] && _main_all_markers="$_main_all_markers
+$_main_file_markers"
+  done
 
-[ "$failures" -eq 0 ]
+  _main_unique_markers=$(printf "%s\n" "$_main_all_markers" | grep -v '^$' | sort -u || true)
+
+  _main_failures=0
+  _main_checked=0
+
+  if [ -z "$_main_unique_markers" ]; then
+    echo "check-shared.sh: no SHARED markers found"
+  else
+    for _main_marker in $_main_unique_markers; do
+      _main_reference_file=""
+      for _main_f in $_main_scripts; do
+        grep -q "BEGIN SHARED: $_main_marker ---" "$_main_f" 2>/dev/null || continue
+
+        if [ -z "$_main_reference_file" ]; then
+          _main_reference_file="$_main_f"
+          extract_block "$_main_f" "$_main_marker" >"$_main_tmp1"
+          continue
+        fi
+
+        extract_block "$_main_f" "$_main_marker" >"$_main_tmp2"
+        _main_checked=$((_main_checked + 1))
+
+        if ! diff -q "$_main_tmp1" "$_main_tmp2" >/dev/null 2>&1; then
+          echo "DRIFT: shared block '$_main_marker' differs between $_main_reference_file and $_main_f"
+          diff "$_main_tmp1" "$_main_tmp2" || true
+          _main_failures=$((_main_failures + 1))
+        fi
+      done
+    done
+  fi
+
+  if [ "$_main_failures" -gt 0 ]; then
+    echo "check-shared.sh: $_main_failures shared block(s) drifted"
+  else
+    printf "check-shared.sh: %d marker(s) verified byte-identical across copies\n" "$_main_checked"
+  fi
+
+  [ "$_main_failures" -eq 0 ]
+}
+
+main "$@"

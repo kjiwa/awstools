@@ -31,6 +31,7 @@ assert_eq "normalize_placeholder: passes through real values" "admin" "$(normali
 
 # --- determine_client ---
 
+export ENGINE
 ENGINE="postgres"
 determine_client
 assert_eq "determine_client: postgres CLIENT" "psql" "$CLIENT"

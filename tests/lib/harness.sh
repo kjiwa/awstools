@@ -91,6 +91,7 @@ assert_false() {
 # stdout+stderr into RUN_STDOUT and its exit status into RUN_STATUS, without
 # ever tripping the caller's `set -e` regardless of the command's outcome.
 run_capture() {
+  # shellcheck disable=SC2034
   if RUN_STDOUT=$("$@" 2>&1); then
     RUN_STATUS=0
   else

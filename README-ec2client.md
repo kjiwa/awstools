@@ -1,8 +1,6 @@
 # ec2client
 
-Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, auto-connect with single match.
-
-There are several good tools in this space — [gossm](https://github.com/gjbae1212/gossm), [aws-ssm-tools](https://github.com/mludvig/aws-ssm-tools), [sshm](https://github.com/claranet/sshm) — and if you need SCP transfer or port forwarding, use one of those. ec2client's niche: filtering by *multiple* tags with AND logic (not just Name), a single zero-dependency POSIX script, the same `-t Tag=Value` UX as [rdsclient](README.md), and the ability to run inside [awsenv](README-awsenv.md) so nothing needs installing locally.
+Connect to EC2 instances via SSH or SSM. Filter by tags, select interactively, and auto-connect with a single match.
 
 ## Features
 

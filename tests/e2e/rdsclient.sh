@@ -44,7 +44,7 @@ set +e
   ENDPOINT_TYPE=""
   FIXTURE_DB_INSTANCES="$FIXTURES_DIR/instances_basic.json"
   FIXTURE_DB_CLUSTERS="$FIXTURES_DIR/clusters_mixed.json"
-  export FIXTURE_DB_INSTANCES FIXTURE_DB_CLUSTERS
+  export FIXTURE_DB_INSTANCES FIXTURE_DB_CLUSTERS TAG_COUNT ENDPOINT_TYPE
   query_databases >"$WORK_DIR/database_list.txt" 2>/dev/null
 )
 query_status=$?

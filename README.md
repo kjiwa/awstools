@@ -44,8 +44,6 @@ With a single match it connects immediately — no prompt.
 | Oracle (EE, SE2, CDB variants) | sqlplus | Manual password entry only — see [README-rdsclient.md](README-rdsclient.md) |
 | SQL Server (EE, SE, EX, Web) | sqlcmd | IAM, Secret, Manual |
 
-`describe-db-clusters` also returns DocumentDB and Neptune clusters, which use unrelated client tooling; rdsclient filters those out.
-
 ## Quick Start
 
 Prerequisites: Docker, the AWS CLI, and AWS credentials with `rds:DescribeDBInstances` / `rds:DescribeDBClusters` (plus `rds-db:connect` for IAM auth or `secretsmanager:GetSecretValue` for Secrets Manager auth).
@@ -98,14 +96,6 @@ Profile and region come entirely from the AWS CLI's own resolution (`AWS_PROFILE
 - **Manual** (`-a manual`) — interactive password prompt; the password is not stored or logged.
 
 Full details — `-u` semantics, per-engine `DatabaseName` defaults, Oracle password handling, tag syntax edge cases — are in [README-rdsclient.md](README-rdsclient.md).
-
-## How It Compares
-
-Claims below were verified against each project's documentation; these are good tools solving adjacent problems.
-
-- **[basti](https://github.com/basti-app/basti)** solves the *network path*: it provisions a bastion EC2 instance and uses SSM port forwarding to expose a database in a private VPC on your localhost. You still bring your own client and credentials. rdsclient solves *discovery, authentication, and the client* — and assumes the endpoint is reachable (VPN, public endpoint, or a tunnel such as one basti opened). The two compose naturally.
-- **Hand-rolled `aws rds generate-db-auth-token` pipelines** (the approach in the [AWS docs](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.IAMDBAuth.Connecting.AWSCLI.html)) work, but you re-write them per engine and per auth method, and they leave endpoints and usernames hard-coded in scripts. rdsclient is that pipeline, generalized: tag discovery, engine detection, auth detection, and SSL defaults in one audited script.
-- **GUI clients with IAM support** (DBeaver, DataGrip, pgAdmin) handle one connection at a time after manual setup per database. rdsclient needs no per-database configuration — if the tags match, it connects.
 
 ## Also Included
 

@@ -24,20 +24,15 @@
 
 set -eu
 
-# ==============================================================================
-# Script Setup
-# ==============================================================================
-
 BASE_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
+readonly BASE_IMAGE
 IMAGE_PREFIX="awsenv-cli"
+readonly IMAGE_PREFIX
 MOUNT_SEPARATOR="$(printf '\036')"
-
-# ==============================================================================
-# User Interface
-# ==============================================================================
+readonly MOUNT_SEPARATOR
 
 usage() {
-  exit_code="${1:-1}"
+  _usage_exit_code="${1:-1}"
 
   cat >&2 <<EOF
 Usage: $0 [OPTIONS] <command> [args...]
@@ -68,17 +63,15 @@ Examples:
   AWSENV_AWS_DIR_MODE=rw $0 aws s3 ls
   AWSENV_PWD_MODE=off $0 aws --version
 EOF
-  exit "$exit_code"
+  exit "$_usage_exit_code"
 }
 
+# --- BEGIN SHARED: error_exit ---
 error_exit() {
-  echo "ERROR: $1" >&2
+  printf "ERROR: %s\n" "$1" >&2
   exit 1
 }
-
-# ==============================================================================
-# String & Validation Utilities
-# ==============================================================================
+# --- END SHARED: error_exit ---
 
 is_valid_identifier() {
   case "$1" in
@@ -95,40 +88,40 @@ validate_command_name() {
 }
 
 validate_docker_path() {
-  path="$1"
-  case "$path" in
-  *..*) error_exit "Docker path '$path' cannot contain '..'" ;;
+  _vdp_path="$1"
+  case "$_vdp_path" in
+  *..*) error_exit "Docker path '$_vdp_path' cannot contain '..'" ;;
   esac
 }
 
 validate_mount_format() {
-  mount="$1"
+  _vmf_mount="$1"
 
-  OLD_IFS="$IFS"
+  _vmf_old_ifs="$IFS"
   IFS=":"
 
   # shellcheck disable=SC2086
-  set -- $mount
-  IFS="$OLD_IFS"
+  set -- $_vmf_mount
+  IFS="$_vmf_old_ifs"
 
-  count=$#
-  [ "$count" -lt 2 ] && error_exit "Invalid mount format '$mount'"
-  [ "$count" -gt 3 ] && error_exit "Invalid mount format '$mount'"
+  _vmf_count=$#
+  [ "$_vmf_count" -lt 2 ] && error_exit "Invalid mount format '$_vmf_mount'"
+  [ "$_vmf_count" -gt 3 ] && error_exit "Invalid mount format '$_vmf_mount'"
 
-  local_path="$1"
-  docker_dir="$2"
+  _vmf_local_path="$1"
+  _vmf_docker_dir="$2"
 
-  if [ "$count" -eq 3 ]; then
-    mode="$3"
-    case "$mode" in
+  if [ "$_vmf_count" -eq 3 ]; then
+    _vmf_mode="$3"
+    case "$_vmf_mode" in
     ro | rw) ;;
-    *) error_exit "Invalid mount mode '$mode'. Expected 'ro' or 'rw'" ;;
+    *) error_exit "Invalid mount mode '$_vmf_mode'. Expected 'ro' or 'rw'" ;;
     esac
   fi
 
-  [ ! -e "$local_path" ] && error_exit "Mount path '$local_path' does not exist"
-  [ ! -r "$local_path" ] && error_exit "Mount path '$local_path' is not readable"
-  validate_docker_path "$docker_dir"
+  [ ! -e "$_vmf_local_path" ] && error_exit "Mount path '$_vmf_local_path' does not exist"
+  [ ! -r "$_vmf_local_path" ] && error_exit "Mount path '$_vmf_local_path' is not readable"
+  validate_docker_path "$_vmf_docker_dir"
 
   return 0
 }
@@ -136,39 +129,39 @@ validate_mount_format() {
 validate_mounts() {
   [ -z "$MOUNTS" ] && return 0
 
-  OLD_IFS="$IFS"
+  _vm_old_ifs="$IFS"
   IFS="$MOUNT_SEPARATOR"
 
   # shellcheck disable=SC2086
   set -- $MOUNTS
-  IFS="$OLD_IFS"
+  IFS="$_vm_old_ifs"
 
-  for mount in "$@"; do
-    [ -n "$mount" ] && validate_mount_format "$mount"
+  for _vm_mount in "$@"; do
+    [ -n "$_vm_mount" ] && validate_mount_format "$_vm_mount"
   done
 }
 
 validate_aws_dir_mode() {
-  mode="${AWSENV_AWS_DIR_MODE:-auto}"
-  case "$mode" in
+  _vadm_mode="${AWSENV_AWS_DIR_MODE:-auto}"
+  case "$_vadm_mode" in
   auto | ro | rw) ;;
-  *) error_exit "Invalid AWSENV_AWS_DIR_MODE '$mode'. Expected 'auto', 'ro', or 'rw'" ;;
+  *) error_exit "Invalid AWSENV_AWS_DIR_MODE '$_vadm_mode'. Expected 'auto', 'ro', or 'rw'" ;;
   esac
 }
 
 validate_pwd_mode() {
-  mode="${AWSENV_PWD_MODE:-rw}"
-  case "$mode" in
+  _vpm_mode="${AWSENV_PWD_MODE:-rw}"
+  case "$_vpm_mode" in
   rw | ro | off) ;;
-  *) error_exit "Invalid AWSENV_PWD_MODE '$mode'. Expected 'rw', 'ro', or 'off'" ;;
+  *) error_exit "Invalid AWSENV_PWD_MODE '$_vpm_mode'. Expected 'rw', 'ro', or 'off'" ;;
   esac
 }
 
 validate_tty_mode() {
-  mode="${AWSENV_TTY:-auto}"
-  case "$mode" in
+  _vtm_mode="${AWSENV_TTY:-auto}"
+  case "$_vtm_mode" in
   always | never | auto) ;;
-  *) error_exit "Invalid AWSENV_TTY '$mode'. Expected 'always', 'never', or 'auto'" ;;
+  *) error_exit "Invalid AWSENV_TTY '$_vtm_mode'. Expected 'always', 'never', or 'auto'" ;;
   esac
 }
 
@@ -180,17 +173,13 @@ validate_parameters() {
   validate_tty_mode
 }
 
-# ==============================================================================
-# Argument Parsing
-# ==============================================================================
-
 parse_arguments() {
   PACKAGES=""
   PACKAGE_FILE=""
   MOUNTS=""
 
-  while getopts "p:f:m:h" opt; do
-    case "$opt" in
+  while getopts "p:f:m:h" _parse_opt; do
+    case "$_parse_opt" in
     p) PACKAGES="$PACKAGES $OPTARG" ;;
     f) PACKAGE_FILE="$OPTARG" ;;
     m)
@@ -216,53 +205,45 @@ parse_arguments() {
   CMD_ARGS_START=$((OPTIND + 1))
 }
 
-# ==============================================================================
-# Package Management
-# ==============================================================================
-
 read_packages_from_file() {
-  file="$1"
-  [ ! -f "$file" ] && error_exit "Package file '$file' does not exist"
-  [ ! -r "$file" ] && error_exit "Package file '$file' is not readable"
+  _read_file="$1"
+  [ ! -f "$_read_file" ] && error_exit "Package file '$_read_file' does not exist"
+  [ ! -r "$_read_file" ] && error_exit "Package file '$_read_file' is not readable"
 
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=$(printf "%s" "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    case "$line" in
+  while IFS= read -r _read_line || [ -n "$_read_line" ]; do
+    _read_line=$(printf "%s" "$_read_line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$_read_line" in
     '' | '#'*) continue ;;
-    *) printf "%s " "$line" ;;
+    *) printf "%s " "$_read_line" ;;
     esac
-  done <"$file"
+  done <"$_read_file"
 }
 
 merge_and_sort_packages() {
-  all_packages="$1"
-  [ -z "$all_packages" ] && return
-  printf "%s" "$all_packages" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' '
+  _merge_all="$1"
+  [ -z "$_merge_all" ] && return
+  printf "%s" "$_merge_all" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' '
 }
 
 hash_packages() {
-  packages="$1"
+  _hash_pkgs="$1"
   if command -v cksum >/dev/null 2>&1; then
-    printf "%s" "$packages" | cksum | awk '{print $1}'
+    printf "%s" "$_hash_pkgs" | cksum | awk '{print $1}'
   elif command -v sum >/dev/null 2>&1; then
-    printf "%s" "$packages" | sum | awk '{print $1}'
+    printf "%s" "$_hash_pkgs" | sum | awk '{print $1}'
   else
-    printf "%s" "$packages" | wc -c
+    printf "%s" "$_hash_pkgs" | wc -c
   fi
 }
 
-# ==============================================================================
-# Docker Image Operations
-# ==============================================================================
-
 compute_image_tag() {
-  packages="$1"
-  if [ -z "$packages" ]; then
+  _compute_pkgs="$1"
+  if [ -z "$_compute_pkgs" ]; then
     printf "base"
     return
   fi
 
-  hash_packages "$packages"
+  hash_packages "$_compute_pkgs"
 }
 
 generate_image_name() {
@@ -274,13 +255,13 @@ image_exists() {
 }
 
 create_dockerfile() {
-  sorted_packages="$1"
-  install_cmd="yum install -y unzip"
-  [ -n "$sorted_packages" ] && install_cmd="$install_cmd $sorted_packages"
+  _dockerfile_pkgs="$1"
+  _dockerfile_cmd="yum install -y unzip"
+  [ -n "$_dockerfile_pkgs" ] && _dockerfile_cmd="$_dockerfile_cmd $_dockerfile_pkgs"
 
   cat <<EOF
 FROM $BASE_IMAGE
-RUN $install_cmd && \\
+RUN $_dockerfile_cmd && \\
     curl -sSL -o /tmp/session-manager-plugin.rpm \\
     https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm && \\
     yum install -y /tmp/session-manager-plugin.rpm && \\
@@ -290,84 +271,80 @@ EOF
 }
 
 build_custom_image() {
-  sorted_packages="$1"
+  _build_pkgs="$1"
 
   image_exists "$IMAGE" && return 0
 
   echo "Building custom image: $IMAGE" >&2
-  [ -n "$sorted_packages" ] && echo "Installing packages: $sorted_packages" >&2
-  create_dockerfile "$sorted_packages" | docker build -t "$IMAGE" - >&2
+  [ -n "$_build_pkgs" ] && echo "Installing packages: $_build_pkgs" >&2
+  create_dockerfile "$_build_pkgs" | docker build -t "$IMAGE" - >&2
 }
 
 determine_image() {
-  file_packages=""
-  [ -n "$PACKAGE_FILE" ] && file_packages=$(read_packages_from_file "$PACKAGE_FILE")
-  all_packages="$PACKAGES $file_packages"
-  sorted_packages=$(merge_and_sort_packages "$all_packages")
-  sorted_packages=$(printf "%s" "$sorted_packages" | sed 's/[[:space:]]*$//')
-  IMAGE=$(generate_image_name "$sorted_packages")
-  build_custom_image "$sorted_packages"
+  _det_file_pkgs=""
+  [ -n "$PACKAGE_FILE" ] && _det_file_pkgs=$(read_packages_from_file "$PACKAGE_FILE")
+  _det_all_pkgs="$PACKAGES $_det_file_pkgs"
+  _det_sorted_pkgs=$(merge_and_sort_packages "$_det_all_pkgs")
+  _det_sorted_pkgs=$(printf "%s" "$_det_sorted_pkgs" | sed 's/[[:space:]]*$//')
+  IMAGE=$(generate_image_name "$_det_sorted_pkgs")
+  build_custom_image "$_det_sorted_pkgs"
 }
-
-# ==============================================================================
-# Command & Path Resolution
-# ==============================================================================
 
 is_aws_cli_builtin() {
   test "$1" = "aws" || test "$1" = "aws_completer" || test "$1" = "session-manager-plugin"
 }
 
 try_readlink_f() {
-  target="$1"
+  _try_target="$1"
   command -v readlink >/dev/null 2>&1 || return 1
-  readlink -f "$target" 2>/dev/null
+  readlink -f "$_try_target" 2>/dev/null
 }
 
 resolve_link_target() {
-  current="$1"
-  link_target="$2"
+  _link_curr="$1"
+  _link_target="$2"
 
-  case "$link_target" in
-  /*) printf "%s" "$link_target" ;;
-  *) printf "%s/%s" "$(dirname "$current")" "$link_target" ;;
+  case "$_link_target" in
+  /*) printf "%s" "$_link_target" ;;
+  *) printf "%s/%s" "$(dirname "$_link_curr")" "$_link_target" ;;
   esac
 }
 
 canonicalize_path() {
-  path="$1"
-  [ ! -e "$path" ] && return 1
+  _canon_path="$1"
+  [ ! -e "$_canon_path" ] && return 1
 
-  cd -P "$(dirname "$path")" >/dev/null 2>&1 || return 1
-  printf "%s/%s" "$(pwd -P)" "$(basename "$path")"
+  cd -P "$(dirname "$_canon_path")" >/dev/null 2>&1 || return 1
+  printf "%s/%s" "$(pwd -P)" "$(basename "$_canon_path")"
   cd - >/dev/null 2>&1 || true
 }
 
 resolve_symlink_manually() {
-  current="$1"
-  max_depth=40
+  _rsm_curr="$1"
+  _rsm_depth=40
 
-  while [ $max_depth -gt 0 ]; do
-    if [ ! -L "$current" ]; then
-      canonicalize_path "$current"
+  while [ "$_rsm_depth" -gt 0 ]; do
+    if [ ! -L "$_rsm_curr" ]; then
+      canonicalize_path "$_rsm_curr"
       return $?
     fi
 
-    link_target=$(readlink "$current")
-    current=$(resolve_link_target "$current" "$link_target")
-    max_depth=$((max_depth - 1))
+    _rsm_target=$(readlink "$_rsm_curr")
+    _rsm_curr=$(resolve_link_target "$_rsm_curr" "$_rsm_target")
+    _rsm_depth=$((_rsm_depth - 1))
   done
 
   return 1
 }
 
 resolve_symlink() {
-  target="$1"
-  if resolved=$(try_readlink_f "$target"); then
-    printf "%s" "$resolved"
+  _res_target="$1"
+  if _res_resolved=$(try_readlink_f "$_res_target"); then
+    printf "%s" "$_res_resolved"
     return 0
   fi
 
-  resolve_symlink_manually "$target"
+  resolve_symlink_manually "$_res_target"
 }
 
 find_command_path() {
@@ -378,9 +355,9 @@ find_command_path() {
     return 0
   fi
 
-  cmd_location=$(command -v "$CMD" 2>/dev/null || true)
-  if [ -n "$cmd_location" ]; then
-    printf "%s" "$cmd_location"
+  _find_cmd_loc=$(command -v "$CMD" 2>/dev/null || true)
+  if [ -n "$_find_cmd_loc" ]; then
+    printf "%s" "$_find_cmd_loc"
     return 0
   fi
 
@@ -396,45 +373,42 @@ resolve_command_location() {
     return 0
   fi
 
-  found_path=$(find_command_path) || error_exit "Command '$CMD' does not exist or is not an executable file"
-  resolved_path=$(resolve_symlink "$found_path") || error_exit "Failed to resolve symlink for '$found_path'"
-  CMD_PATH="$resolved_path"
+  _rcl_found=$(find_command_path) || error_exit "Command '$CMD' does not exist or is not an executable file"
+  _rcl_resolved=$(resolve_symlink "$_rcl_found") || error_exit "Failed to resolve symlink for '$_rcl_found'"
+  CMD_PATH="$_rcl_resolved"
   [ -e "$CMD_PATH" ] && CMD_MOUNT_DIR="$(dirname "$CMD_PATH")"
 }
 
-# ==============================================================================
-# AWS Command Detection
-# ==============================================================================
-
 GLOBAL_OPTS_WITH_VALUE=" --profile --region --output --endpoint-url --ca-bundle --cli-read-timeout --cli-connect-timeout --color --query --cli-binary-format "
+readonly GLOBAL_OPTS_WITH_VALUE
 
 get_positional_args() {
   shift $((CMD_ARGS_START - 1))
 
   FIRST_POS=""
   SECOND_POS=""
-  skip_next=0
+  _pos_skip_next=0
 
-  for arg in "$@"; do
-    if [ "$skip_next" -eq 1 ]; then
-      skip_next=0
+  for _pos_arg in "$@"; do
+    if [ "$_pos_skip_next" -eq 1 ]; then
+      _pos_skip_next=0
       continue
     fi
 
-    case "$arg" in
+    case "$_pos_arg" in
     --*=*) continue ;;
     --*)
       case "$GLOBAL_OPTS_WITH_VALUE" in
-      *" $arg "*) skip_next=1 ;;
+      *" $_pos_arg "*) _pos_skip_next=1 ;;
       esac
       continue
       ;;
     -*) continue ;;
     *)
       if [ -z "$FIRST_POS" ]; then
-        FIRST_POS="$arg"
+        FIRST_POS="$_pos_arg"
       elif [ -z "$SECOND_POS" ]; then
-        SECOND_POS="$arg"
+        SECOND_POS="$_pos_arg"
         break
       fi
       ;;
@@ -444,8 +418,8 @@ get_positional_args() {
 
 has_device_code_flag() {
   shift $((CMD_ARGS_START - 1))
-  for arg in "$@"; do
-    case "$arg" in
+  for _hdc_arg in "$@"; do
+    case "$_hdc_arg" in
     --use-device-code) return 0 ;;
     esac
   done
@@ -456,33 +430,33 @@ profile_needs_write_access() {
   [ "$CMD" != "aws" ] && return 1
   [ ! -d "$HOME/.aws" ] && return 1
 
-  profile=""
+  _pnw_profile=""
 
   shift $((CMD_ARGS_START - 1))
   while [ $# -gt 0 ]; do
     case "$1" in
     --profile)
       shift
-      profile="${1:-}"
+      _pnw_profile="${1:-}"
       break
       ;;
     --profile=*)
-      profile="${1#--profile=}"
+      _pnw_profile="${1#--profile=}"
       break
       ;;
     esac
     shift
   done
 
-  [ -z "$profile" ] && profile="${AWS_PROFILE:-default}"
+  [ -z "$_pnw_profile" ] && _pnw_profile="${AWS_PROFILE:-default}"
 
-  config_file="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
-  [ ! -f "$config_file" ] && return 1
+  _pnw_config="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+  [ ! -f "$_pnw_config" ] && return 1
 
-  if grep -q "^\[profile $profile\]" "$config_file" 2>/dev/null; then
-    sed -n "/^\[profile $profile\]/,/^\[/p" "$config_file" | grep -Eq "^(sso_|role_arn)" && return 0
-  elif grep -q "^\[$profile\]" "$config_file" 2>/dev/null; then
-    sed -n "/^\[$profile\]/,/^\[/p" "$config_file" | grep -Eq "^(sso_|role_arn)" && return 0
+  if grep -q "^\[profile $_pnw_profile\]" "$_pnw_config" 2>/dev/null; then
+    sed -n "/^\[profile $_pnw_profile\]/,/^\[/p" "$_pnw_config" | grep -Eq "^(sso_|role_arn)" && return 0
+  elif grep -q "^\[$_pnw_profile\]" "$_pnw_config" 2>/dev/null; then
+    sed -n "/^\[$_pnw_profile\]/,/^\[/p" "$_pnw_config" | grep -Eq "^(sso_|role_arn)" && return 0
   fi
 
   return 1
@@ -530,10 +504,6 @@ needs_host_network() {
   return 1
 }
 
-# ==============================================================================
-# Docker Environment Configuration
-# ==============================================================================
-
 should_allocate_tty() {
   case "${AWSENV_TTY:-auto}" in
   always) return 0 ;;
@@ -551,11 +521,11 @@ determine_docker_tty_flags() {
 }
 
 determine_aws_dir_mode() {
-  mode="${AWSENV_AWS_DIR_MODE:-auto}"
+  _dadm_mode="${AWSENV_AWS_DIR_MODE:-auto}"
 
-  case "$mode" in
+  case "$_dadm_mode" in
   ro | rw)
-    printf "%s" "$mode"
+    printf "%s" "$_dadm_mode"
     return 0
     ;;
   esac
@@ -572,8 +542,8 @@ determine_pwd_mode() {
 }
 
 aws_credentials_mount_value() {
-  mount_mode="$1"
-  [ -d "$HOME/.aws" ] && printf "%s:/root/.aws:%s" "$HOME/.aws" "$mount_mode"
+  _acmv_mode="$1"
+  [ -d "$HOME/.aws" ] && printf "%s:/root/.aws:%s" "$HOME/.aws" "$_acmv_mode"
   return 0
 }
 
@@ -587,23 +557,19 @@ count_mounts() {
 }
 
 get_mount_at_index() {
-  idx="$1"
-  printf "%s" "$MOUNTS" | tr "$MOUNT_SEPARATOR" '\n' | sed -n "${idx}p"
+  _gmai_idx="$1"
+  printf "%s" "$MOUNTS" | tr "$MOUNT_SEPARATOR" '\n' | sed -n "${_gmai_idx}p"
 }
 
 cmd_mount_shadowed_by_pwd() {
-  pwd_mode="$1"
+  _cmsp_pwd_mode="$1"
 
   [ -z "$CMD_MOUNT_DIR" ] && return 1
-  [ "$pwd_mode" = "off" ] && return 1
+  [ "$_cmsp_pwd_mode" = "off" ] && return 1
 
-  # Mounting the command's directory again at the same target docker rejects
-  # as a duplicate mount point regardless of mode.
   [ "$CMD_MOUNT_DIR" = "$(pwd)" ] && return 0
 
-  # A read-write cwd mount always wins over a nested read-only command mount;
-  # skip the latter so it doesn't collide with (or shadow) the former.
-  if [ "$pwd_mode" = "rw" ]; then
+  if [ "$_cmsp_pwd_mode" = "rw" ]; then
     case "$CMD_MOUNT_DIR" in
     "$(pwd)"/*) return 0 ;;
     esac
@@ -612,64 +578,51 @@ cmd_mount_shadowed_by_pwd() {
   return 1
 }
 
-# ==============================================================================
-# Dependency Checking
-# ==============================================================================
-
 check_dependencies() {
   command -v docker >/dev/null 2>&1 || error_exit "docker is required but not found"
 }
 
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
-
 run_container() {
-  aws_dir_mode=$(determine_aws_dir_mode "$@")
-  pwd_mode=$(determine_pwd_mode)
-  tty_flags=$(determine_docker_tty_flags)
+  _rc_aws_dir_mode=$(determine_aws_dir_mode "$@")
+  _rc_pwd_mode=$(determine_pwd_mode)
+  _rc_tty_flags=$(determine_docker_tty_flags)
 
-  host_network=0
-  needs_host_network "$@" && host_network=1
+  _rc_host_network=0
+  needs_host_network "$@" && _rc_host_network=1
 
-  skip_cmd_mount=0
-  cmd_mount_shadowed_by_pwd "$pwd_mode" && skip_cmd_mount=1
+  _rc_skip_cmd_mount=0
+  cmd_mount_shadowed_by_pwd "$_rc_pwd_mode" && _rc_skip_cmd_mount=1
 
   shift $((CMD_ARGS_START - 1))
-  # "$@" is now the trailing arguments to pass to CMD_PATH inside the
-  # container. Every docker flag below is prepended in front of "$@" via
-  # `set --`; docker does not care about the relative order of its own
-  # flags, only that they precede IMAGE, which precedes CMD_PATH, which
-  # precedes the command's own arguments.
 
   set -- "$IMAGE" "$CMD_PATH" "$@"
   set -- -w "$(pwd)" "$@"
 
-  if [ "$pwd_mode" != "off" ]; then
-    set -- -v "$(pwd):$(pwd):$pwd_mode" "$@"
+  if [ "$_rc_pwd_mode" != "off" ]; then
+    set -- -v "$(pwd):$(pwd):$_rc_pwd_mode" "$@"
   fi
 
-  if [ "$skip_cmd_mount" -eq 0 ] && [ -n "$CMD_MOUNT_DIR" ]; then
+  if [ "$_rc_skip_cmd_mount" -eq 0 ] && [ -n "$CMD_MOUNT_DIR" ]; then
     set -- -v "$CMD_MOUNT_DIR:$CMD_MOUNT_DIR:ro" "$@"
   fi
 
-  mount_count=$(count_mounts)
-  i=1
-  while [ "$i" -le "$mount_count" ]; do
-    mount=$(get_mount_at_index "$i")
-    [ -n "$mount" ] && set -- -v "$mount" "$@"
-    i=$((i + 1))
+  _rc_mount_count=$(count_mounts)
+  _rc_i=1
+  while [ "$_rc_i" -le "$_rc_mount_count" ]; do
+    _rc_mount=$(get_mount_at_index "$_rc_i")
+    [ -n "$_rc_mount" ] && set -- -v "$_rc_mount" "$@"
+    _rc_i=$((_rc_i + 1))
   done
 
-  aws_mount=$(aws_credentials_mount_value "$aws_dir_mode")
-  [ -n "$aws_mount" ] && set -- -v "$aws_mount" "$@"
+  _rc_aws_mount=$(aws_credentials_mount_value "$_rc_aws_dir_mode")
+  [ -n "$_rc_aws_mount" ] && set -- -v "$_rc_aws_mount" "$@"
 
-  [ "$host_network" -eq 1 ] && set -- --network host "$@"
+  [ "$_rc_host_network" -eq 1 ] && set -- --network host "$@"
 
-  for var in $(printenv | grep '^AWS_' | cut -d= -f1); do
-    is_valid_identifier "$var" || continue
-    value=$(printenv "$var" 2>/dev/null || true)
-    [ -n "$value" ] && set -- -e "$var" "$@"
+  for _rc_var in $(printenv | grep '^AWS_' | cut -d= -f1); do
+    is_valid_identifier "$_rc_var" || continue
+    _rc_val=$(printenv "$_rc_var" 2>/dev/null || true)
+    [ -n "$_rc_val" ] && set -- -e "$_rc_var" "$@"
   done
 
   [ -n "${TERM:-}" ] && set -- -e TERM "$@"
@@ -679,12 +632,12 @@ run_container() {
   [ -n "${PAGER:-}" ] && set -- -e PAGER "$@"
   [ -n "${LANG:-}" ] && set -- -e LANG "$@"
 
-  for var in $(printenv | grep '^LC_' | cut -d= -f1); do
-    is_valid_identifier "$var" || continue
-    set -- -e "$var" "$@"
+  for _rc_var in $(printenv | grep '^LC_' | cut -d= -f1); do
+    is_valid_identifier "$_rc_var" || continue
+    set -- -e "$_rc_var" "$@"
   done
 
-  set -- "$tty_flags" --rm --entrypoint= "$@"
+  set -- "$_rc_tty_flags" --rm --entrypoint= "$@"
 
   exec docker run "$@"
 }

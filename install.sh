@@ -24,20 +24,13 @@
 
 set -eu
 
-# ==============================================================================
-# Script Setup
-# ==============================================================================
-
 TARGET_DIR=""
 INSTALL_COMPLETION=""
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# ==============================================================================
-# User Interface
-# ==============================================================================
+readonly SCRIPT_DIR
 
 usage() {
-  exit_code="${1:-1}"
+  _usage_exit_code="${1:-1}"
 
   cat >&2 <<EOF
 Usage: $0 -d DIRECTORY [-c SHELL]
@@ -54,21 +47,19 @@ Examples:
   $0 -d ~/.local/bin -c bash
   sudo $0 -d /usr/local/bin -c zsh
 EOF
-  exit "$exit_code"
+  exit "$_usage_exit_code"
 }
 
+# --- BEGIN SHARED: error_exit ---
 error_exit() {
   printf "ERROR: %s\n" "$1" >&2
   exit 1
 }
-
-# ==============================================================================
-# Argument Parsing
-# ==============================================================================
+# --- END SHARED: error_exit ---
 
 parse_options() {
-  while getopts "d:c:h" opt; do
-    case "$opt" in
+  while getopts "d:c:h" _parse_opt; do
+    case "$_parse_opt" in
     d) TARGET_DIR="$OPTARG" ;;
     c) INSTALL_COMPLETION="$OPTARG" ;;
     h) usage 0 ;;
@@ -84,10 +75,6 @@ parse_options() {
   fi
 }
 
-# ==============================================================================
-# Validation
-# ==============================================================================
-
 validate_completion_shell() {
   if [ -n "$INSTALL_COMPLETION" ]; then
     case "$INSTALL_COMPLETION" in
@@ -98,9 +85,9 @@ validate_completion_shell() {
 }
 
 check_source_file() {
-  file="$1"
-  if [ ! -f "$SCRIPT_DIR/$file" ]; then
-    error_exit "Source file not found: $SCRIPT_DIR/$file"
+  _check_file="$1"
+  if [ ! -f "$SCRIPT_DIR/$_check_file" ]; then
+    error_exit "Source file not found: $SCRIPT_DIR/$_check_file"
   fi
 }
 
@@ -123,17 +110,13 @@ validate_target_writable() {
   fi
 }
 
-# ==============================================================================
-# Installation Operations
-# ==============================================================================
-
 copy_and_rename() {
-  source="$1"
-  dest="$2"
+  _copy_source="$1"
+  _copy_dest="$2"
 
-  printf "Installing: %s\n" "$dest"
-  cp "$SCRIPT_DIR/$source" "$TARGET_DIR/$dest" || error_exit "Failed to copy $source to $TARGET_DIR/$dest"
-  chmod +x "$TARGET_DIR/$dest" || error_exit "Failed to set executable permission on $TARGET_DIR/$dest"
+  printf "Installing: %s\n" "$_copy_dest"
+  cp "$SCRIPT_DIR/$_copy_source" "$TARGET_DIR/$_copy_dest" || error_exit "Failed to copy $_copy_source to $TARGET_DIR/$_copy_dest"
+  chmod +x "$TARGET_DIR/$_copy_dest" || error_exit "Failed to set executable permission on $TARGET_DIR/$_copy_dest"
 }
 
 install_main_scripts() {
@@ -143,15 +126,15 @@ install_main_scripts() {
 }
 
 create_wrapper_script() {
-  name="$1"
-  target="$TARGET_DIR/$name"
+  _wrapper_name="$1"
+  _wrapper_target="$TARGET_DIR/$_wrapper_name"
 
-  printf "Creating wrapper: %s\n" "$name"
-  cat >"$target" <<EOF
+  printf "Creating wrapper: %s\n" "$_wrapper_name"
+  cat >"$_wrapper_target" <<EOF
 #!/bin/sh
 exec "$TARGET_DIR/awsenv" "\$(basename "\$0")" "\$@"
 EOF
-  chmod +x "$target" || error_exit "Failed to set executable permission on $target"
+  chmod +x "$_wrapper_target" || error_exit "Failed to set executable permission on $_wrapper_target"
 }
 
 install_wrapper_scripts() {
@@ -160,30 +143,26 @@ install_wrapper_scripts() {
   create_wrapper_script "session-manager-plugin"
 }
 
-# ==============================================================================
-# Shell Completion Setup
-# ==============================================================================
-
 get_user_home() {
   [ -z "${HOME:-}" ] && error_exit "HOME is not set"
   printf "%s" "$HOME"
 }
 
 get_shell_rc_file() {
-  shell="$1"
-  user_home=$(get_user_home)
+  _rc_shell="$1"
+  _rc_home=$(get_user_home)
 
-  case "$shell" in
-  bash) printf "%s/.bashrc" "$user_home" ;;
-  zsh) printf "%s/.zshrc" "$user_home" ;;
+  case "$_rc_shell" in
+  bash) printf "%s/.bashrc" "$_rc_home" ;;
+  zsh) printf "%s/.zshrc" "$_rc_home" ;;
   *) return 1 ;;
   esac
 }
 
 get_completion_commands() {
-  shell="$1"
+  _comp_shell="$1"
 
-  case "$shell" in
+  case "$_comp_shell" in
   bash)
     printf "complete -C aws_completer aws"
     ;;
@@ -197,22 +176,22 @@ get_completion_commands() {
 }
 
 check_completion_exists() {
-  rc_file="$1"
+  _check_rc_file="$1"
 
-  if [ ! -f "$rc_file" ]; then
+  if [ ! -f "$_check_rc_file" ]; then
     return 1
   fi
 
-  grep -q "complete -C aws_completer aws" "$rc_file" 2>/dev/null
+  grep -q "complete -C aws_completer aws" "$_check_rc_file" 2>/dev/null
 }
 
 append_completion() {
-  rc_file="$1"
-  commands="$2"
+  _append_rc_file="$1"
+  _append_commands="$2"
 
-  touch "$rc_file" || error_exit "Failed to create RC file: $rc_file"
-  printf "\n# AWS CLI completion (added by install.sh)\n" >>"$rc_file"
-  printf "%s\n" "$commands" >>"$rc_file"
+  touch "$_append_rc_file" || error_exit "Failed to create RC file: $_append_rc_file"
+  printf "\n# AWS CLI completion (added by install.sh)\n" >>"$_append_rc_file"
+  printf "%s\n" "$_append_commands" >>"$_append_rc_file"
 }
 
 install_shell_completion() {
@@ -220,25 +199,21 @@ install_shell_completion() {
     return 0
   fi
 
-  rc_file=$(get_shell_rc_file "$INSTALL_COMPLETION")
+  _install_rc_file=$(get_shell_rc_file "$INSTALL_COMPLETION")
 
-  if check_completion_exists "$rc_file"; then
-    printf "Completion already configured in: %s\n" "$rc_file"
+  if check_completion_exists "$_install_rc_file"; then
+    printf "Completion already configured in: %s\n" "$_install_rc_file"
     return 0
   fi
 
-  commands=$(get_completion_commands "$INSTALL_COMPLETION")
+  _install_commands=$(get_completion_commands "$INSTALL_COMPLETION")
 
-  printf "Installing %s completion to: %s\n" "$INSTALL_COMPLETION" "$rc_file"
-  append_completion "$rc_file" "$commands"
+  printf "Installing %s completion to: %s\n" "$INSTALL_COMPLETION" "$_install_rc_file"
+  append_completion "$_install_rc_file" "$_install_commands"
 
   printf "\nTo activate completion, run:\n"
-  printf "  source %s\n" "$rc_file"
+  printf "  source %s\n" "$_install_rc_file"
 }
-
-# ==============================================================================
-# Output
-# ==============================================================================
 
 print_success() {
   printf "\nInstallation complete!\n"

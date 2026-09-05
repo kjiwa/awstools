@@ -24,10 +24,6 @@
 
 set -eu
 
-# ==============================================================================
-# Script Setup
-# ==============================================================================
-
 ENDPOINT_TYPE=""
 AUTH_TYPE=""
 TAG_KEYS=""
@@ -38,12 +34,8 @@ DB_PASSWORD=""
 CONTAINER_NAME=""
 SSL_MODE="true"
 
-# ==============================================================================
-# User Interface
-# ==============================================================================
-
 usage() {
-  exit_code="${1:-1}"
+  _usage_exit_code="${1:-1}"
 
   cat >&2 <<EOF
 Usage: $0 [OPTIONS]
@@ -76,7 +68,7 @@ Examples:
   $0 -u myuser -a manual
   $0 -t Environment=dev -s false
 EOF
-  exit "$exit_code"
+  exit "$_usage_exit_code"
 }
 
 # --- BEGIN SHARED: error_exit ---
@@ -86,19 +78,11 @@ error_exit() {
 }
 # --- END SHARED: error_exit ---
 
-# ==============================================================================
-# Cleanup Handler
-# ==============================================================================
-
 cleanup() {
   if [ -n "$CONTAINER_NAME" ]; then
     docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
 }
-
-# ==============================================================================
-# String Utilities
-# ==============================================================================
 
 # --- BEGIN SHARED: trim_whitespace ---
 trim_whitespace() {
@@ -106,33 +90,25 @@ trim_whitespace() {
 }
 # --- END SHARED: trim_whitespace ---
 
-# ==============================================================================
-# User Input
-# ==============================================================================
-
 read_password() {
   printf "Enter database password: " >&2
   stty -echo 2>/dev/null || true
-  read -r password_input </dev/tty
+  read -r _read_pwd_input </dev/tty
   stty echo 2>/dev/null || true
   printf "\n" >&2
 
-  [ -z "$password_input" ] && error_exit "Password cannot be empty"
-  DB_PASSWORD="$password_input"
+  [ -z "$_read_pwd_input" ] && error_exit "Password cannot be empty"
+  DB_PASSWORD="$_read_pwd_input"
 }
-
-# ==============================================================================
-# Tag Parsing & Validation
-# ==============================================================================
 
 # --- BEGIN SHARED: parse_tag_argument ---
 parse_tag_argument() {
-  arg="$1"
+  _parse_arg="$1"
 
-  case "$arg" in
+  case "$_parse_arg" in
   *=*)
-    PARSED_KEY="${arg%%=*}"
-    PARSED_VALUE="${arg#*=}"
+    PARSED_KEY="${_parse_arg%%=*}"
+    PARSED_VALUE="${_parse_arg#*=}"
     ;;
   *)
     PARSED_KEY=""
@@ -144,42 +120,42 @@ parse_tag_argument() {
 
 # --- BEGIN SHARED: validate_tag_format ---
 validate_tag_format() {
-  original="$1"
-  key="$2"
-  value="$3"
+  _val_original="$1"
+  _val_key="$2"
+  _val_value="$3"
 
-  [ -z "$key" ] && error_exit "Invalid tag format '$original': must contain '=' character"
+  [ -z "$_val_key" ] && error_exit "Invalid tag format '$_val_original': must contain '=' character"
 
-  trimmed_key=$(trim_whitespace "$key")
-  [ -z "$trimmed_key" ] && error_exit "Invalid tag format '$original': key cannot be empty"
-  case "$trimmed_key" in
-  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': key contains unsafe characters" ;;
+  _val_trimmed_key=$(trim_whitespace "$_val_key")
+  [ -z "$_val_trimmed_key" ] && error_exit "Invalid tag format '$_val_original': key cannot be empty"
+  case "$_val_trimmed_key" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$_val_original': key contains unsafe characters" ;;
   esac
 
-  trimmed_value=$(trim_whitespace "$value")
-  [ -z "$trimmed_value" ] && error_exit "Invalid tag format '$original': value cannot be empty"
-  case "$trimmed_value" in
-  *[\$\`\\\"\']*) error_exit "Invalid tag format '$original': value contains unsafe characters" ;;
+  _val_trimmed_value=$(trim_whitespace "$_val_value")
+  [ -z "$_val_trimmed_value" ] && error_exit "Invalid tag format '$_val_original': value cannot be empty"
+  case "$_val_trimmed_value" in
+  *[\$\`\\\"\']*) error_exit "Invalid tag format '$_val_original': value contains unsafe characters" ;;
   esac
 
-  PARSED_KEY="$trimmed_key"
-  PARSED_VALUE="$trimmed_value"
+  PARSED_KEY="$_val_trimmed_key"
+  PARSED_VALUE="$_val_trimmed_value"
 }
 # --- END SHARED: validate_tag_format ---
 
 # --- BEGIN SHARED: accumulate_tags ---
 accumulate_tags() {
-  key="$1"
-  value="$2"
+  _acc_key="$1"
+  _acc_value="$2"
 
   if [ -z "$TAG_KEYS" ]; then
-    TAG_KEYS="$key"
-    TAG_VALUES="$value"
+    TAG_KEYS="$_acc_key"
+    TAG_VALUES="$_acc_value"
   else
     TAG_KEYS="$TAG_KEYS
-$key"
+$_acc_key"
     TAG_VALUES="$TAG_VALUES
-$value"
+$_acc_value"
   fi
 
   TAG_COUNT=$((TAG_COUNT + 1))
@@ -188,19 +164,15 @@ $value"
 
 # --- BEGIN SHARED: get_tag_at_index ---
 get_tag_at_index() {
-  idx="$1"
-  TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${idx}p")
-  TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${idx}p")
+  _get_idx="$1"
+  TAG_KEY_AT_INDEX=$(printf "%s" "$TAG_KEYS" | sed -n "${_get_idx}p")
+  TAG_VALUE_AT_INDEX=$(printf "%s" "$TAG_VALUES" | sed -n "${_get_idx}p")
 }
 # --- END SHARED: get_tag_at_index ---
 
-# ==============================================================================
-# Argument Parsing
-# ==============================================================================
-
 parse_options() {
-  while getopts "e:a:t:u:s:h" opt; do
-    case $opt in
+  while getopts "e:a:t:u:s:h" _parse_opt; do
+    case "$_parse_opt" in
     e) ENDPOINT_TYPE="$OPTARG" ;;
     a) AUTH_TYPE="$OPTARG" ;;
     t)
@@ -226,10 +198,6 @@ apply_user_auth_default() {
     AUTH_TYPE="manual"
   fi
 }
-
-# ==============================================================================
-# Parameter Validation
-# ==============================================================================
 
 validate_endpoint_type() {
   [ -n "$ENDPOINT_TYPE" ] || return 0
@@ -260,24 +228,16 @@ validate_parameters() {
   validate_ssl_mode
 }
 
-# ==============================================================================
-# Dependency Checking
-# ==============================================================================
-
 check_dependencies() {
-  for tool in aws jq docker; do
-    command -v "$tool" >/dev/null 2>&1 || error_exit "'$tool' is required but not found"
+  for _check_tool in aws jq docker; do
+    command -v "$_check_tool" >/dev/null 2>&1 || error_exit "'$_check_tool' is required but not found"
   done
 }
 
-# ==============================================================================
-# Tag Filtering & Query
-# ==============================================================================
-
 build_jq_tag_selector() {
-  key="$1"
-  value="$2"
-  printf 'select(.TagList[]? | select(.Key == "%s" and .Value == "%s"))' "$key" "$value"
+  _jq_key="$1"
+  _jq_val="$2"
+  printf 'select(.TagList[]? | select(.Key == "%s" and .Value == "%s"))' "$_jq_key" "$_jq_val"
 }
 
 build_rds_tag_filter() {
@@ -286,33 +246,33 @@ build_rds_tag_filter() {
     return
   fi
 
-  filter=""
-  i=1
-  while [ "$i" -le "$TAG_COUNT" ]; do
-    get_tag_at_index "$i"
-    selector=$(build_jq_tag_selector "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX")
+  _filter=""
+  _filter_i=1
+  while [ "$_filter_i" -le "$TAG_COUNT" ]; do
+    get_tag_at_index "$_filter_i"
+    _filter_sel=$(build_jq_tag_selector "$TAG_KEY_AT_INDEX" "$TAG_VALUE_AT_INDEX")
 
-    if [ -n "$filter" ]; then
-      filter="$filter | "
+    if [ -n "$_filter" ]; then
+      _filter="$_filter | "
     fi
-    filter="$filter$selector"
+    _filter="$_filter$_filter_sel"
 
-    i=$((i + 1))
+    _filter_i=$((_filter_i + 1))
   done
 
-  printf "%s" "$filter"
+  printf "%s" "$_filter"
 }
 
 filter_by_tags() {
-  json_data="$1"
-  resource_type="$2"
+  _fbt_json="$1"
+  _fbt_resource="$2"
 
-  tag_filter=$(build_rds_tag_filter)
+  _fbt_filter=$(build_rds_tag_filter)
 
-  if [ -z "$tag_filter" ]; then
-    printf "%s" "$json_data" | jq ".$resource_type | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
+  if [ -z "$_fbt_filter" ]; then
+    printf "%s" "$_fbt_json" | jq ".$_fbt_resource | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
   else
-    printf "%s" "$json_data" | jq ".$resource_type | [.[] | $tag_filter] | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
+    printf "%s" "$_fbt_json" | jq ".$_fbt_resource | [.[] | $_fbt_filter] | sort_by(.DBInstanceIdentifier // .DBClusterIdentifier)"
   fi
 }
 
@@ -332,20 +292,20 @@ build_tag_display_message() {
 }
 
 query_databases() {
-  message=$(build_tag_display_message)
-  printf "Searching for %s...\n" "$message" >&2
+  _query_msg=$(build_tag_display_message)
+  printf "Searching for %s...\n" "$_query_msg" >&2
 
-  instances_json=$(AWSENV_TTY=never aws rds describe-db-instances --output json) ||
+  _query_inst_json=$(AWSENV_TTY=never aws rds describe-db-instances --output json) ||
     error_exit "Failed to query RDS instances"
-  clusters_json=$(AWSENV_TTY=never aws rds describe-db-clusters --output json) ||
+  _query_clust_json=$(AWSENV_TTY=never aws rds describe-db-clusters --output json) ||
     error_exit "Failed to query RDS clusters"
 
-  filtered_instances=$(filter_by_tags "$instances_json" "DBInstances")
-  filtered_clusters=$(filter_by_tags "$clusters_json" "DBClusters")
+  _query_filt_inst=$(filter_by_tags "$_query_inst_json" "DBInstances")
+  _query_filt_clust=$(filter_by_tags "$_query_clust_json" "DBClusters")
 
   DATABASE_LIST=$(
-    get_standalone_instances "$filtered_instances"
-    get_cluster_endpoints "$filtered_clusters" "$ENDPOINT_TYPE"
+    get_standalone_instances "$_query_filt_inst"
+    get_cluster_endpoints "$_query_filt_clust" "$ENDPOINT_TYPE"
   )
 
   [ -z "$DATABASE_LIST" ] && error_exit "No databases found"
@@ -353,14 +313,10 @@ query_databases() {
   return 0
 }
 
-# ==============================================================================
-# Database List Assembly
-# ==============================================================================
-
 get_standalone_instances() {
-  instances_json="$1"
+  _standalone_json="$1"
 
-  printf "%s" "$instances_json" | jq -r '
+  printf "%s" "$_standalone_json" | jq -r '
     .[] | select(.DBClusterIdentifier == null or .DBClusterIdentifier == "") |
     [
       .DBInstanceIdentifier,
@@ -376,13 +332,13 @@ get_standalone_instances() {
 }
 
 get_cluster_endpoints() {
-  clusters_json="$1"
-  endpoint_type="$2"
+  _cluster_json="$1"
+  _cluster_ep_type="$2"
 
   # Only Aurora and Multi-AZ DB clusters go through this code path;
   # docdb/neptune clusters (also returned by describe-db-clusters) are
   # filtered out here since they use unrelated client tooling.
-  printf "%s" "$clusters_json" | jq -r --arg endpoint_type "$endpoint_type" '
+  printf "%s" "$_cluster_json" | jq -r --arg endpoint_type "$_cluster_ep_type" '
     .[] | select(.Engine | IN("aurora-postgresql", "aurora-mysql", "mysql", "postgres")) |
     . as $c |
     (
@@ -406,33 +362,29 @@ get_cluster_endpoints() {
     )[] | @tsv'
 }
 
-# ==============================================================================
-# Database Selection
-# ==============================================================================
-
 # --- BEGIN SHARED: count_lines ---
 count_lines() {
-  text="$1"
-  if [ -z "$text" ]; then
+  _count_text="$1"
+  if [ -z "$_count_text" ]; then
     printf "0"
     return
   fi
 
-  printf "%s\n" "$text" | grep -c .
+  printf "%s\n" "$_count_text" | grep -c .
 }
 # --- END SHARED: count_lines ---
 
 display_databases() {
   printf "\n" >&2
-  i=1
-  printf "%s\n" "$DATABASE_LIST" | while IFS="$(printf '\t')" read -r id engine endpoint type rest; do
-    if [ -n "$id" ]; then
-      if [ "$type" = "cluster" ]; then
-        printf "%d. [Cluster] %s (%s): %s\n" "$i" "$id" "$engine" "$endpoint" >&2
+  _disp_db_i=1
+  printf "%s\n" "$DATABASE_LIST" | while IFS="$(printf '\t')" read -r _disp_id _disp_engine _disp_endpoint _disp_type _disp_rest; do
+    if [ -n "$_disp_id" ]; then
+      if [ "$_disp_type" = "cluster" ]; then
+        printf "%d. [Cluster] %s (%s): %s\n" "$_disp_db_i" "$_disp_id" "$_disp_engine" "$_disp_endpoint" >&2
       else
-        printf "%d. [RDS] %s (%s): %s\n" "$i" "$id" "$engine" "$endpoint" >&2
+        printf "%d. [RDS] %s (%s): %s\n" "$_disp_db_i" "$_disp_id" "$_disp_engine" "$_disp_endpoint" >&2
       fi
-      i=$((i + 1))
+      _disp_db_i=$((_disp_db_i + 1))
     fi
   done
   printf "\n" >&2
@@ -440,50 +392,46 @@ display_databases() {
 
 # --- BEGIN SHARED: read_user_selection ---
 read_user_selection() {
-  max="$1"
-  noun="$2"
+  _rus_max="$1"
+  _rus_noun="$2"
 
   while true; do
-    printf "Select %s (1-%d): " "$noun" "$max" >&2
-    read -r selection </dev/tty || exit 1
+    printf "Select %s (1-%d): " "$_rus_noun" "$_rus_max" >&2
+    read -r _rus_selection </dev/tty || exit 1
 
-    case "$selection" in
+    case "$_rus_selection" in
     '' | *[!0-9]*)
       printf "ERROR: Invalid selection\n" >&2
       continue
       ;;
     esac
 
-    if [ "$selection" -ge 1 ] && [ "$selection" -le "$max" ]; then
-      printf "%s" "$selection"
+    if [ "$_rus_selection" -ge 1 ] && [ "$_rus_selection" -le "$_rus_max" ]; then
+      printf "%s" "$_rus_selection"
       return 0
     fi
 
-    printf "ERROR: Selection must be between 1 and %d\n" "$max" >&2
+    printf "ERROR: Selection must be between 1 and %d\n" "$_rus_max" >&2
   done
 }
 # --- END SHARED: read_user_selection ---
 
 select_database() {
-  count=$(count_lines "$DATABASE_LIST")
+  _select_db_count=$(count_lines "$DATABASE_LIST")
 
-  if [ "$count" -eq 1 ]; then
+  if [ "$_select_db_count" -eq 1 ]; then
     printf "Connecting to database...\n" >&2
-    selection=1
+    _select_db_choice=1
   else
     display_databases
-    selection=$(read_user_selection "$count" "database")
+    _select_db_choice=$(read_user_selection "$_select_db_count" "database")
   fi
 
-  SELECTED_LINE=$(printf "%s" "$DATABASE_LIST" | sed -n "${selection}p")
+  SELECTED_LINE=$(printf "%s" "$DATABASE_LIST" | sed -n "${_select_db_choice}p")
   DB_IDENTIFIER=$(printf "%s" "$SELECTED_LINE" | cut -f1)
   ENGINE=$(printf "%s" "$SELECTED_LINE" | cut -f2)
   ENDPOINT=$(printf "%s" "$SELECTED_LINE" | cut -f3)
 }
-
-# ==============================================================================
-# Database Details
-# ==============================================================================
 
 normalize_placeholder() {
   [ "$1" = "-" ] && return 0
@@ -503,9 +451,9 @@ get_database_details() {
     [ -z "$DB_USER" ] && error_exit "Failed to retrieve master username. Specify username with -u"
   fi
 
-  db_display=""
-  [ -n "$DB_NAME" ] && db_display="/$DB_NAME"
-  printf "Found database: %s (%s:%s%s)\n" "$DB_IDENTIFIER" "$ENDPOINT" "$PORT" "$db_display" >&2
+  _details_display=""
+  [ -n "$DB_NAME" ] && _details_display="/$DB_NAME"
+  printf "Found database: %s (%s:%s%s)\n" "$DB_IDENTIFIER" "$ENDPOINT" "$PORT" "$_details_display" >&2
 }
 
 determine_client() {
@@ -536,10 +484,6 @@ determine_client() {
   esac
 }
 
-# ==============================================================================
-# Authentication
-# ==============================================================================
-
 authenticate_manual() {
   read_password
   FINAL_USER="${DB_USER:-$MASTER_USER}"
@@ -550,29 +494,29 @@ authenticate_iam() {
   printf "Generating IAM authentication token...\n" >&2
 
   FINAL_USER="${DB_USER:-$MASTER_USER}"
-  token=$(AWSENV_TTY=never aws rds generate-db-auth-token \
+  _auth_token=$(AWSENV_TTY=never aws rds generate-db-auth-token \
     --hostname "$ENDPOINT" \
     --port "$PORT" \
     --username "$FINAL_USER" \
     --output text) || error_exit "Failed to generate IAM authentication token"
 
-  [ -z "$token" ] && error_exit "Failed to generate IAM authentication token"
-  FINAL_PASSWORD="$token"
+  [ -z "$_auth_token" ] && error_exit "Failed to generate IAM authentication token"
+  FINAL_PASSWORD="$_auth_token"
 }
 
 authenticate_secret() {
   [ -z "$SECRET_ARN" ] && error_exit "No AWS Secrets Manager secret found for this database"
 
   printf "Retrieving credentials from AWS Secrets Manager...\n" >&2
-  secret_value=$(AWSENV_TTY=never aws secretsmanager get-secret-value \
+  _auth_secret_val=$(AWSENV_TTY=never aws secretsmanager get-secret-value \
     --secret-id "$SECRET_ARN" \
     --query SecretString \
     --output text) || error_exit "Failed to retrieve secret from Secrets Manager"
 
-  [ -z "$secret_value" ] && error_exit "Failed to retrieve secret from Secrets Manager"
+  [ -z "$_auth_secret_val" ] && error_exit "Failed to retrieve secret from Secrets Manager"
 
-  FINAL_USER=$(printf "%s" "$secret_value" | jq -r '.username // empty')
-  FINAL_PASSWORD=$(printf "%s" "$secret_value" | jq -r '.password // empty')
+  FINAL_USER=$(printf "%s" "$_auth_secret_val" | jq -r '.username // empty')
+  FINAL_PASSWORD=$(printf "%s" "$_auth_secret_val" | jq -r '.password // empty')
   if [ -z "$FINAL_USER" ] || [ -z "$FINAL_PASSWORD" ]; then
     error_exit "Failed to parse credentials from Secrets Manager"
   fi
@@ -602,17 +546,13 @@ authenticate() {
   esac
 }
 
-# ==============================================================================
-# Connection Operations
-# ==============================================================================
-
 connect_to_postgresql() {
-  db_name="${DB_NAME:-postgres}"
-  url="postgresql://$FINAL_USER@$ENDPOINT:$PORT/$db_name"
-  [ "$SSL_MODE" = "true" ] && url="$url?sslmode=require"
+  _pg_db_name="${DB_NAME:-postgres}"
+  _pg_url="postgresql://$FINAL_USER@$ENDPOINT:$PORT/$_pg_db_name"
+  [ "$SSL_MODE" = "true" ] && _pg_url="$_pg_url?sslmode=require"
 
   docker run --rm -it --name "$CONTAINER_NAME" -e "$PASSWORD_ENV" "$DOCKER_IMAGE" \
-    psql "$url"
+    psql "$_pg_url"
 }
 
 connect_to_mysql() {
@@ -665,10 +605,6 @@ connect_database() {
   sqlcmd) connect_to_sqlserver ;;
   esac
 }
-
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
 
 main() {
   trap cleanup EXIT INT TERM HUP

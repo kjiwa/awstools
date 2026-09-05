@@ -27,6 +27,7 @@ load_script_functions "$REPO_DIR/awsenv.sh" "$TMP_SCRIPT"
 
 # --- should_allocate_tty: auto mode must not always allocate ---
 
+export AWSENV_TTY
 AWSENV_TTY=always
 run_capture should_allocate_tty
 assert_true "should_allocate_tty: always mode allocates" "$RUN_STATUS"
@@ -68,6 +69,7 @@ assert_false "validate_mount_format rejects too few fields" "$RUN_STATUS"
 
 # --- get_positional_args: skip values of global AWS CLI options ---
 
+export CMD CMD_ARGS_START
 CMD="aws"
 CMD_ARGS_START=2
 get_positional_args "aws" "sso" "login"
@@ -88,6 +90,7 @@ assert_eq "get_positional_args: skips --region VALUE (second)" "sso" "$SECOND_PO
 
 # --- cmd_mount_shadowed_by_pwd ---
 
+export CMD_MOUNT_DIR
 cd "$TMP_DIR"
 CMD_MOUNT_DIR="$TMP_DIR"
 run_capture cmd_mount_shadowed_by_pwd "rw"
