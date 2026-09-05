@@ -45,7 +45,9 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$REPO_DIR/awsenv.sh" \
     "$REPO_DIR/ec2client.sh" \
     "$REPO_DIR/rdsclient.sh" \
-    "$REPO_DIR/install.sh"
+    "$REPO_DIR/install.sh" \
+    "$REPO_DIR/tests/check-shared.sh" \
+    "$REPO_DIR/tests/run.sh"
   shellcheck_status=$?
   set -e
   record_result "shellcheck" "$shellcheck_status"
