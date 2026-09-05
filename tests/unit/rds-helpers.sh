@@ -58,7 +58,7 @@ assert_false "determine_client: unsupported engine fails" "$RUN_STATUS"
 
 # --- get_standalone_instances: single-pass TSV, no separate describe call ---
 
-instances_json=$(cat "$FIXTURES_DIR/instances_basic.json" | jq '.DBInstances')
+instances_json=$(jq '.DBInstances' "$FIXTURES_DIR/instances_basic.json")
 row=$(get_standalone_instances "$instances_json")
 assert_eq "get_standalone_instances: row count" "1" "$(count_lines "$row")"
 assert_contains "get_standalone_instances: identifier present" "$row" "standalone-postgres"
@@ -66,7 +66,7 @@ assert_contains "get_standalone_instances: type is rds" "$row" "	rds	"
 db_name_field=$(printf "%s" "$row" | cut -f6)
 assert_eq "get_standalone_instances: missing DBName becomes placeholder '-'" "-" "$db_name_field"
 
-secret_instances_json=$(cat "$FIXTURES_DIR/instances_with_secret.json" | jq '.DBInstances')
+secret_instances_json=$(jq '.DBInstances' "$FIXTURES_DIR/instances_with_secret.json")
 secret_row=$(get_standalone_instances "$secret_instances_json")
 secret_arn_field=$(printf "%s" "$secret_row" | cut -f9)
 assert_contains "get_standalone_instances: MasterUserSecret.SecretArn is captured in the TSV" "$secret_arn_field" "arn:aws:secretsmanager"
@@ -75,7 +75,7 @@ assert_eq "get_standalone_instances: IAMDatabaseAuthenticationEnabled=false is c
 
 # --- get_cluster_endpoints: single jq pass, non-RDS engines filtered ---
 
-clusters_json=$(cat "$FIXTURES_DIR/clusters_mixed.json" | jq '.DBClusters')
+clusters_json=$(jq '.DBClusters' "$FIXTURES_DIR/clusters_mixed.json")
 rows=$(get_cluster_endpoints "$clusters_json" "")
 assert_eq "get_cluster_endpoints: docdb/neptune filtered, aurora writer+reader, multiaz writer" "3" "$(count_lines "$rows")"
 assert_not_contains "get_cluster_endpoints: docdb is excluded" "$rows" "docdb"

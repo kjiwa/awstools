@@ -6,14 +6,6 @@
 
 set -eu
 
-#!/bin/sh
-
-# Single entry point for the test suite: shellcheck, the shared-block drift
-# check, function-level unit tests, and stubbed end-to-end tests. Exits
-# non-zero if any of these fail. Runnable from any working directory.
-
-set -eu
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly SCRIPT_DIR
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
